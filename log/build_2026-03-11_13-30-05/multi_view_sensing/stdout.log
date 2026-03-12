@@ -1,0 +1,35 @@
+running egg_info
+creating ../../build/multi_view_sensing/multi_view_sensing.egg-info
+writing ../../build/multi_view_sensing/multi_view_sensing.egg-info/PKG-INFO
+writing dependency_links to ../../build/multi_view_sensing/multi_view_sensing.egg-info/dependency_links.txt
+writing entry points to ../../build/multi_view_sensing/multi_view_sensing.egg-info/entry_points.txt
+writing requirements to ../../build/multi_view_sensing/multi_view_sensing.egg-info/requires.txt
+writing top-level names to ../../build/multi_view_sensing/multi_view_sensing.egg-info/top_level.txt
+writing manifest file '../../build/multi_view_sensing/multi_view_sensing.egg-info/SOURCES.txt'
+reading manifest file '../../build/multi_view_sensing/multi_view_sensing.egg-info/SOURCES.txt'
+writing manifest file '../../build/multi_view_sensing/multi_view_sensing.egg-info/SOURCES.txt'
+running build
+running build_py
+creating /home/jay/pest_control_ws/build/multi_view_sensing/build
+creating /home/jay/pest_control_ws/build/multi_view_sensing/build/lib
+creating /home/jay/pest_control_ws/build/multi_view_sensing/build/lib/multi_view_sensing
+copying multi_view_sensing/camera_streamer.py -> /home/jay/pest_control_ws/build/multi_view_sensing/build/lib/multi_view_sensing
+copying multi_view_sensing/__init__.py -> /home/jay/pest_control_ws/build/multi_view_sensing/build/lib/multi_view_sensing
+running install
+running install_lib
+creating /home/jay/pest_control_ws/install/multi_view_sensing/lib/python3.10/site-packages/multi_view_sensing
+copying /home/jay/pest_control_ws/build/multi_view_sensing/build/lib/multi_view_sensing/camera_streamer.py -> /home/jay/pest_control_ws/install/multi_view_sensing/lib/python3.10/site-packages/multi_view_sensing
+copying /home/jay/pest_control_ws/build/multi_view_sensing/build/lib/multi_view_sensing/__init__.py -> /home/jay/pest_control_ws/install/multi_view_sensing/lib/python3.10/site-packages/multi_view_sensing
+byte-compiling /home/jay/pest_control_ws/install/multi_view_sensing/lib/python3.10/site-packages/multi_view_sensing/camera_streamer.py to camera_streamer.cpython-310.pyc
+byte-compiling /home/jay/pest_control_ws/install/multi_view_sensing/lib/python3.10/site-packages/multi_view_sensing/__init__.py to __init__.cpython-310.pyc
+running install_data
+creating /home/jay/pest_control_ws/install/multi_view_sensing/share/ament_index
+creating /home/jay/pest_control_ws/install/multi_view_sensing/share/ament_index/resource_index
+creating /home/jay/pest_control_ws/install/multi_view_sensing/share/ament_index/resource_index/packages
+copying resource/multi_view_sensing -> /home/jay/pest_control_ws/install/multi_view_sensing/share/ament_index/resource_index/packages
+copying package.xml -> /home/jay/pest_control_ws/install/multi_view_sensing/share/multi_view_sensing
+running install_egg_info
+Copying ../../build/multi_view_sensing/multi_view_sensing.egg-info to /home/jay/pest_control_ws/install/multi_view_sensing/lib/python3.10/site-packages/multi_view_sensing-0.0.0-py3.10.egg-info
+running install_scripts
+Installing streamer script to /home/jay/pest_control_ws/install/multi_view_sensing/lib/multi_view_sensing
+writing list of installed files to '/home/jay/pest_control_ws/build/multi_view_sensing/install.log'
