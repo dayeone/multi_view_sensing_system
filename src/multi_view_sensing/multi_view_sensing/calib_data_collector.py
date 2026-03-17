@@ -13,6 +13,9 @@ class SingleCalibCollector(Node):
         self.checkerboard = (7, 10) 
         self.target_cam_idx = 0 
         self.prev_time = 0  # FPS 계산용 이전 시간
+
+        self.frame_times = []
+        self.window_size = 30  # FPS 계산을 위한 프레임 수
         
         self.save_path = os.path.expanduser(f'~/pest_control_ws/calib_data/cam{self.target_cam_idx}')
         os.makedirs(self.save_path, exist_ok=True)
@@ -46,11 +49,25 @@ class SingleCalibCollector(Node):
         ret, frame = self.cap.read()
         if not ret: return
 
-        # 1. FPS 계산
+       # 1. 정밀 FPS 계산 (이동 평균 방식)
         curr_time = time.time()
-        sec = curr_time - self.prev_time
+        
+        # 첫 프레임이 아닐 때만 계산
+        if self.prev_time > 0:
+            sec = curr_time - self.prev_time
+            self.frame_times.append(sec)
+            
+            # 바구니 크기를 30개로 유지 (오래된 데이터는 버림)
+            if len(self.frame_times) > self.window_size:
+                self.frame_times.pop(0)
+            
+            # 평균 시간 계산 및 FPS 산출
+            avg_sec = sum(self.frame_times) / len(self.frame_times)
+            fps = 1 / avg_sec if avg_sec > 0 else 0
+        else:
+            fps = 0
+
         self.prev_time = curr_time
-        fps = 1 / sec if sec > 0 else 0
 
         display_frame = frame.copy()
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
