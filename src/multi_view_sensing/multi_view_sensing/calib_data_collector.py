@@ -11,24 +11,39 @@ class SingleCalibCollector(Node):
         super().__init__('single_calib_collector')
         
         self.checkerboard = (7, 10) 
-        self.target_cam_idx = 0 
-        self.prev_time = 0  # FPS 계산용 이전 시간
+        self.prev_time = 0 
 
+        # [기존 기능 유지] FPS 계산을 위한 프레임 저장소
         self.frame_times = []
-        self.window_size = 30  # FPS 계산을 위한 프레임 수
+        self.window_size = 30 
         
-        self.save_path = os.path.expanduser(f'~/pest_control_ws/calib_data/cam{self.target_cam_idx}')
+        # --- [교정 포인트 1] 파라미터로 카메라 경로 받기 ---
+        # 이제 숫자 0이 아니라 '/dev/cam0' 같은 이름을 사용합니다.
+        self.declare_parameter('device_path', '/dev/cam0')
+        self.device_path = self.get_parameter('device_path').get_parameter_value().string_value
+        # -----------------------------------------------
+
+        # [교정 포인트 2] 저장 경로 자동 설정
+        # /dev/cam0 에서 마지막 'cam0'만 잘라내서 폴더 이름으로 씁니다.
+        folder_name = self.device_path.split('/')[-1]
+        self.save_path = os.path.expanduser(f'~/pest_control_ws/calib_data/{folder_name}')
         os.makedirs(self.save_path, exist_ok=True)
 
-        self.cap = cv2.VideoCapture(self.target_cam_idx, cv2.CAP_V4L2)
+        # [교정 포인트 3] 카메라 열기 및 설정
+        # 장치 경로(self.device_path)를 사용하여 카메라를 켭니다.
+        self.cap = cv2.VideoCapture(self.device_path, cv2.CAP_V4L2)
         if self.cap.isOpened():
             self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
         
-        self.timer = self.create_timer(0.01, self.timer_callback) # 최대한 빠르게 루프
-        self.win_name = f'Cam {self.target_cam_idx} Calib (C: Capture, Q: Quit)'
+        self.timer = self.create_timer(0.01, self.timer_callback) 
+        
+        # [교정 포인트 4] 윈도우 이름 변경
+        self.win_name = f'{folder_name} Calib (C: Capture, Q: Quit)'
         cv2.namedWindow(self.win_name, cv2.WINDOW_NORMAL)
+
+        self.get_logger().info(f'>>> 현재 [{self.device_path}] 카메라가 준비되었습니다!')
 
 
     def draw_grid(self, frame):

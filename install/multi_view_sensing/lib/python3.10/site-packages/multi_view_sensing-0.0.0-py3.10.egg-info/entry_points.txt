@@ -1,3 +1,0 @@
-[console_scripts]
-streamer = multi_view_sensing.camera_streamer:main
-
