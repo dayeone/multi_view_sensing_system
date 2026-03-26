@@ -45,7 +45,7 @@ class SingleCalibCollector(Node):
             # GStreamer는 '문자열 경로'가 필요합니다.
             gstreamer_pipeline = (
                 f"v4l2src device={real_device_path} ! "
-                f"image/jpeg, width=1280, height=720, framerate=30/1 ! "
+                f"image/jpeg, width=1280, height=720, framerate=60/1 ! "
                 f"jpegparse ! nvjpegdec ! "
                 f"video/x-raw ! videoconvert ! appsink drop=true sync=false"
             )
@@ -59,6 +59,7 @@ class SingleCalibCollector(Node):
                     self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
                     self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
                     self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+                    self.cap.set(cv2.CAP_PROP_FPS, 60)
         
         # 카메라 오픈 실패 시 에러 로깅
         if not self.cap.isOpened():
