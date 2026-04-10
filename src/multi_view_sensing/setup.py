@@ -31,7 +31,8 @@ setup(
         'console_scripts': [
             # 터미널에서 'streamer'라고 치면 이 코드가 실행되도록 설정
             'streamer = multi_view_sensing.camera_streamer:main',
-            'calib_collector = multi_view_sensing.calib_data_collector:main'
+            'calib_collector = multi_view_sensing.calib_data_collector:main',
+            'multi_view_remote_publisher = multi_view_sensing.multi_view_remote_publisher:main'
         ],
     },
 )
