@@ -18,7 +18,7 @@ class MultiViewRemotePublisher(Node):
             'device_paths',
             ['/dev/video0', '/dev/video4', '/dev/video8', '/dev/video12'],
         )
-        self.declare_parameter('jpeg_quality', 70)
+        self.declare_parameter('jpeg_quality', 50)
 
         self.device_paths = (
             self.get_parameter('device_paths')
@@ -65,7 +65,7 @@ class MultiViewRemotePublisher(Node):
             self.capture_threads.append(t)
 
         # ── 검출 결과 공유 (lock 보호) ──
-        # detect_overlays[i] = 검출된 corners가 그려진 640x360 이미지 or None
+        # detect_overlays[i] = 검출된 corners가 그려진 480x270 이미지 or None
         self.detect_overlays = [None] * self.num_cams
         self.detect_lock = threading.Lock()
 
@@ -84,26 +84,19 @@ class MultiViewRemotePublisher(Node):
             t.start()
             self.detect_threads.append(t)
 
-        # ── 3단계: 합성+송출 ──
+        # ── 3단계: 합성+송출 (publish_loop 제거, 타이머에서 직접 publish) ──
         qos_profile = QoSProfile(
-            reliability=ReliabilityPolicy.RELIABLE,
-            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            durability=DurabilityPolicy.VOLATILE,
             history=HistoryPolicy.KEEP_LAST,
-            depth=10,
+            depth=1,
         )
         self.image_pub = self.create_publisher(
             CompressedImage, '/multi_view/image_compressed', qos_profile
         )
 
-        # 카메라별 마지막 수신 프레임 캐시 (640x360)
+        # 카메라별 마지막 수신 프레임 캐시 (480x270)
         self.last_frames = [None] * self.num_cams
-
-        # 송출 버퍼 큐
-        self.publish_queue = queue.Queue(maxsize=10)
-        self.publish_thread = threading.Thread(
-            target=self._publish_loop, daemon=True
-        )
-        self.publish_thread.start()
 
         # FPS / Latency 이동 평균
         self.prev_time = 0.0
@@ -111,8 +104,8 @@ class MultiViewRemotePublisher(Node):
         self.latency_times = []
         self.window_size = 30
 
-        # 메인 타이머 30Hz: 캡처 프레임 합성 + 검출 오버레이 → publish
-        self.timer = self.create_timer(1.0 / 30.0, self._timer_callback)
+        # 메인 타이머 15Hz: 캡처 프레임 합성 + 검출 오버레이 → 직접 publish
+        self.timer = self.create_timer(1.0 / 15.0, self._timer_callback)
         self.get_logger().info('MultiViewRemotePublisher started')
 
     # ── 캡처 스레드 ──
@@ -155,28 +148,28 @@ class MultiViewRemotePublisher(Node):
                 corners = cv2.cornerSubPix(
                     gray, corners, (11, 11), (-1, -1), criteria
                 )
-                # 검출 결과를 프레임에 그린 후 640x360으로 축소
+                # 검출 결과를 프레임에 그린 후 480x270으로 축소
                 overlay = frame.copy()
                 cv2.drawChessboardCorners(
                     overlay, self.checkerboard, corners, ret_cb
                 )
-                overlay_small = cv2.resize(overlay, (640, 360))
+                overlay_small = cv2.resize(overlay, (480, 270))
                 with self.detect_lock:
                     self.detect_overlays[cam_idx] = overlay_small
             else:
                 with self.detect_lock:
                     self.detect_overlays[cam_idx] = None
 
-    # ── 메인 타이머 콜백: 합성 + 오버레이 ──
+    # ── 메인 타이머 콜백: 합성 + 오버레이 + 직접 publish ──
     def _timer_callback(self):
-        """30Hz: 캡처 프레임에 검출 오버레이를 덮어씌운 뒤 2x2 합성"""
+        """15Hz: 캡처 프레임에 검출 오버레이를 덮어씌운 뒤 2x2 합성 → 직접 publish"""
         capture_time = None
 
         # 캡처 큐에서 최신 프레임 수집
         for i, q in enumerate(self.capture_queues):
             try:
                 ts, frame = q.get_nowait()
-                self.last_frames[i] = cv2.resize(frame, (640, 360))
+                self.last_frames[i] = cv2.resize(frame, (480, 270))
                 if capture_time is None:
                     capture_time = ts
 
@@ -204,15 +197,25 @@ class MultiViewRemotePublisher(Node):
                 else:
                     display_frames.append(self.last_frames[i])
 
-        # 2x2 합성 (최종 1280x720)
+        # 2x2 합성 (최종 960x540)
         top = cv2.hconcat([display_frames[0], display_frames[1]])
         bottom = cv2.hconcat([display_frames[2], display_frames[3]])
         combined = cv2.vconcat([top, bottom])
 
-        # FPS 이동 평균
-        curr_time = time.time()
+        # JPEG 인코딩
+        ret_enc, encoded = cv2.imencode(
+            '.jpg', combined,
+            [int(cv2.IMWRITE_JPEG_QUALITY), self.jpeg_quality],
+        )
+        if not ret_enc:
+            return
+
+        # publish 직전 시점 기록 → FPS/Latency 계산 기준
+        publish_time = time.time()
+
+        # FPS 이동 평균 (실제 publish 간격 기준)
         if self.prev_time > 0:
-            sec = curr_time - self.prev_time
+            sec = publish_time - self.prev_time
             self.frame_times.append(sec)
             if len(self.frame_times) > self.window_size:
                 self.frame_times.pop(0)
@@ -220,10 +223,10 @@ class MultiViewRemotePublisher(Node):
             fps = 1.0 / avg_sec if avg_sec > 0 else 0.0
         else:
             fps = 0.0
-        self.prev_time = curr_time
+        self.prev_time = publish_time
 
-        # Latency 이동 평균
-        raw_latency = (curr_time - capture_time) * 1000
+        # Latency 이동 평균 (캡처 → publish 직전까지의 실제 경과 시간)
+        raw_latency = (publish_time - capture_time) * 1000
         self.latency_times.append(raw_latency)
         if len(self.latency_times) > self.window_size:
             self.latency_times.pop(0)
@@ -239,7 +242,7 @@ class MultiViewRemotePublisher(Node):
             cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 2,
         )
 
-        # JPEG 인코딩 후 송출 큐에 적재
+        # 오버레이 후 재인코딩하여 직접 publish
         ret_enc, encoded = cv2.imencode(
             '.jpg', combined,
             [int(cv2.IMWRITE_JPEG_QUALITY), self.jpeg_quality],
@@ -249,23 +252,7 @@ class MultiViewRemotePublisher(Node):
             msg.header.stamp = self.get_clock().now().to_msg()
             msg.format = 'jpeg'
             msg.data = encoded.tobytes()
-            if self.publish_queue.full():
-                try:
-                    self.publish_queue.get_nowait()
-                except queue.Empty:
-                    pass
-            self.publish_queue.put(msg)
-
-    # ── 송출 스레드 ──
-    def _publish_loop(self):
-        """50ms 간격으로 publish_queue에서 꺼내 Foxglove로 송출"""
-        while self.is_running:
-            try:
-                msg = self.publish_queue.get(timeout=0.1)
-                self.image_pub.publish(msg)
-            except queue.Empty:
-                continue
-            time.sleep(0.05)
+            self.image_pub.publish(msg)
 
     def __del__(self):
         """소멸자: 스레드 종료 및 카메라 자원 해제"""
@@ -273,8 +260,6 @@ class MultiViewRemotePublisher(Node):
         for t in self.detect_threads:
             if t.is_alive():
                 t.join(timeout=1.0)
-        if hasattr(self, 'publish_thread') and self.publish_thread.is_alive():
-            self.publish_thread.join(timeout=1.0)
         for t in self.capture_threads:
             if t.is_alive():
                 t.join(timeout=1.0)
