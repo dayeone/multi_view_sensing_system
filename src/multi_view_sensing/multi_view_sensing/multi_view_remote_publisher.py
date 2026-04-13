@@ -18,7 +18,7 @@ class MultiViewRemotePublisher(Node):
             'device_paths',
             ['/dev/video0', '/dev/video4', '/dev/video8', '/dev/video12'],
         )
-        self.declare_parameter('jpeg_quality', 50)
+        self.declare_parameter('jpeg_quality', 70)
 
         self.device_paths = (
             self.get_parameter('device_paths')
@@ -59,7 +59,9 @@ class MultiViewRemotePublisher(Node):
             self.capture_queues.append(q)
 
             t = threading.Thread(
-                target=self._capture_loop, args=(cap, q), daemon=True
+                target=self._capture_loop,
+                args=(cap, q, len(self.capture_threads)),
+                daemon=True,
             )
             t.start()
             self.capture_threads.append(t)
@@ -84,7 +86,7 @@ class MultiViewRemotePublisher(Node):
             t.start()
             self.detect_threads.append(t)
 
-        # ── 3단계: 합성+송출 (publish_loop 제거, 타이머에서 직접 publish) ──
+        # ── 3단계: 합성+송출 (타이머에서 직접 publish) ──
         qos_profile = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             durability=DurabilityPolicy.VOLATILE,
@@ -98,9 +100,19 @@ class MultiViewRemotePublisher(Node):
         # 카메라별 마지막 수신 프레임 캐시 (480x270)
         self.last_frames = [None] * self.num_cams
 
-        # FPS / Latency 이동 평균
-        self.prev_time = 0.0
-        self.frame_times = []
+        # 스레드별 FPS 측정용 카운터와 락
+        self.fps_lock = threading.Lock()
+        self.capture_counts = [0] * self.num_cams
+        self.detect_counts = [0] * self.num_cams
+        self.publish_count = 0
+        self.last_fps_calc_time = time.time()
+
+        # 1초 간격으로 계산된 FPS 값
+        self.avg_capture_fps = 0.0
+        self.avg_detect_fps = 0.0
+        self.publish_fps = 0.0
+
+        # Latency 이동 평균
         self.latency_times = []
         self.window_size = 30
 
@@ -109,7 +121,7 @@ class MultiViewRemotePublisher(Node):
         self.get_logger().info('MultiViewRemotePublisher started')
 
     # ── 캡처 스레드 ──
-    def _capture_loop(self, cap, q):
+    def _capture_loop(self, cap, q, cam_idx):
         """카메라에서 프레임을 읽어 큐를 최신 프레임으로 유지"""
         while self.is_running and cap.isOpened():
             ret, frame = cap.read()
@@ -120,6 +132,8 @@ class MultiViewRemotePublisher(Node):
                     except queue.Empty:
                         pass
                 q.put((time.time(), frame))
+                with self.fps_lock:
+                    self.capture_counts[cam_idx] += 1
 
     # ── 검출 스레드 (카메라당 1개) ──
     def _detect_loop(self, cam_idx):
@@ -160,9 +174,27 @@ class MultiViewRemotePublisher(Node):
                 with self.detect_lock:
                     self.detect_overlays[cam_idx] = None
 
+            # 검출 시도 1회 완료 시점에 카운터 증가
+            with self.fps_lock:
+                self.detect_counts[cam_idx] += 1
+
     # ── 메인 타이머 콜백: 합성 + 오버레이 + 직접 publish ──
     def _timer_callback(self):
         """15Hz: 캡처 프레임에 검출 오버레이를 덮어씌운 뒤 2x2 합성 → 직접 publish"""
+
+        # 1초마다 스레드별 FPS 갱신
+        now = time.time()
+        elapsed = now - self.last_fps_calc_time
+        if elapsed >= 1.0:
+            with self.fps_lock:
+                self.avg_capture_fps = sum(self.capture_counts) / self.num_cams / elapsed
+                self.avg_detect_fps = sum(self.detect_counts) / self.num_cams / elapsed
+                self.publish_fps = self.publish_count / elapsed
+                self.capture_counts = [0] * self.num_cams
+                self.detect_counts = [0] * self.num_cams
+                self.publish_count = 0
+            self.last_fps_calc_time = now
+
         capture_time = None
 
         # 캡처 큐에서 최신 프레임 수집
@@ -202,28 +234,8 @@ class MultiViewRemotePublisher(Node):
         bottom = cv2.hconcat([display_frames[2], display_frames[3]])
         combined = cv2.vconcat([top, bottom])
 
-        # JPEG 인코딩
-        ret_enc, encoded = cv2.imencode(
-            '.jpg', combined,
-            [int(cv2.IMWRITE_JPEG_QUALITY), self.jpeg_quality],
-        )
-        if not ret_enc:
-            return
-
-        # publish 직전 시점 기록 → FPS/Latency 계산 기준
+        # publish 직전 시점 기록
         publish_time = time.time()
-
-        # FPS 이동 평균 (실제 publish 간격 기준)
-        if self.prev_time > 0:
-            sec = publish_time - self.prev_time
-            self.frame_times.append(sec)
-            if len(self.frame_times) > self.window_size:
-                self.frame_times.pop(0)
-            avg_sec = sum(self.frame_times) / len(self.frame_times)
-            fps = 1.0 / avg_sec if avg_sec > 0 else 0.0
-        else:
-            fps = 0.0
-        self.prev_time = publish_time
 
         # Latency 이동 평균 (캡처 → publish 직전까지의 실제 경과 시간)
         raw_latency = (publish_time - capture_time) * 1000
@@ -232,27 +244,33 @@ class MultiViewRemotePublisher(Node):
             self.latency_times.pop(0)
         latency_ms = sum(self.latency_times) / len(self.latency_times)
 
-        # 오버레이
+        # 오버레이: 3가지 스레드별 FPS + Latency
+        fps_text = f'Cap: {self.avg_capture_fps:.1f} | Det: {self.avg_detect_fps:.1f} | Pub: {self.publish_fps:.1f}'
         cv2.putText(
-            combined, f'FPS: {fps:.1f}', (20, 50),
-            cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2,
+            combined, fps_text, (20, 40),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2,
         )
         cv2.putText(
-            combined, f'Latency: {latency_ms:.1f} ms', (20, 90),
-            cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 2,
+            combined, f'Latency: {latency_ms:.1f} ms', (20, 70),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2,
         )
 
-        # 오버레이 후 재인코딩하여 직접 publish
+        # JPEG 인코딩 (단 1회) 후 직접 publish
         ret_enc, encoded = cv2.imencode(
             '.jpg', combined,
             [int(cv2.IMWRITE_JPEG_QUALITY), self.jpeg_quality],
         )
-        if ret_enc:
-            msg = CompressedImage()
-            msg.header.stamp = self.get_clock().now().to_msg()
-            msg.format = 'jpeg'
-            msg.data = encoded.tobytes()
-            self.image_pub.publish(msg)
+        if not ret_enc:
+            return
+
+        msg = CompressedImage()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.format = 'jpeg'
+        msg.data = encoded.tobytes()
+        self.image_pub.publish(msg)
+
+        with self.fps_lock:
+            self.publish_count += 1
 
     def __del__(self):
         """소멸자: 스레드 종료 및 카메라 자원 해제"""
