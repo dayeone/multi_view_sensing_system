@@ -7,7 +7,7 @@ import yaml
 # 1. 설정 (재환님의 체커보드 정보)
 CHECKERBOARD = (7, 10)  # 내부 코너 개수
 SQUARE_SIZE = 15.0      # mm 단위
-cam_idx = 0            # 테스트할 카메라 번호
+cam_idx = 3          # 테스트할 카메라 번호
 
 # 3D 실제 좌표 설정 (0,0,0), (15,0,0), (30,0,0) ...
 objp = np.zeros((CHECKERBOARD[0] * CHECKERBOARD[1], 3), np.float32)
@@ -16,6 +16,7 @@ objp *= SQUARE_SIZE
 
 objpoints = [] # 3D 실제 공간의 점들
 imgpoints = [] # 2D 이미지 평면의 점들
+used_files = [] # 인식에 성공한 이미지 파일 목록
 
 # 2. 이미지 불러오기
 images = glob.glob(os.path.expanduser(f'~/pest_control_ws/calib_data/cam{cam_idx}/*.jpg'))
@@ -39,6 +40,7 @@ for fname in images:
         criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
         corners2 = cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1), criteria)
         imgpoints.append(corners2)
+        used_files.append(fname)
         print(f"인식 성공: {os.path.basename(fname)}")
     else:
         print(f"인식 실패: {os.path.basename(fname)}")
@@ -51,6 +53,15 @@ if ret:
     # 4. 결과 출력 및 저장
     print("\n[카메라 보정 완료]")
     print(f"재투영 오차(RMS Error): {ret:.4f}") # 1.0 미만이면 아주 훌륭합니다.
+
+       # ── 이미지별 재투영 오차 출력 (여기에 추가) ──
+    print("\n[이미지별 재투영 오차]")
+    for i, fname in enumerate(used_files):
+        img_points_proj, _ = cv2.projectPoints(objpoints[i], rvecs[i], tvecs[i], mtx, dist)
+        error = np.sqrt(np.mean(np.sum((imgpoints[i].reshape(-1, 2) - img_points_proj.reshape(-1, 2)) ** 2, axis=1)))
+        mark = " ★" if error > 1.5 else ""
+        print(f"  {os.path.basename(fname)}: {error:.4f} px{mark}")
+    # ── 추가 끝 ──
     
     # 결과를 dict 형태로 정리
     calib_data = {
