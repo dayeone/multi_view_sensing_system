@@ -22,6 +22,7 @@ class MultiViewRemotePublisher(Node):
         )
         self.declare_parameter('jpeg_quality', 70)
         self.declare_parameter('enable_metrics_log', False)
+        self.declare_parameter('display_mode', 'local')
 
         self.device_paths = (
             self.get_parameter('device_paths')
@@ -37,6 +38,11 @@ class MultiViewRemotePublisher(Node):
             self.get_parameter('enable_metrics_log')
             .get_parameter_value()
             .bool_value
+        )
+        self.display_mode = (
+            self.get_parameter('display_mode')
+            .get_parameter_value()
+            .string_value
         )
 
         self.is_running = True
@@ -94,16 +100,24 @@ class MultiViewRemotePublisher(Node):
             t.start()
             self.detect_threads.append(t)
 
-        # ── 3단계: 합성+송출 (타이머에서 직접 publish) ──
-        qos_profile = QoSProfile(
-            reliability=ReliabilityPolicy.BEST_EFFORT,
-            durability=DurabilityPolicy.VOLATILE,
-            history=HistoryPolicy.KEEP_LAST,
-            depth=1,
-        )
-        self.image_pub = self.create_publisher(
-            CompressedImage, '/multi_view/image_compressed', qos_profile
-        )
+        # ── 3단계: 모드별 출력 설정 ──
+        if self.display_mode == 'local':
+            self.win_name = 'MultiView 2x2 (Q: Quit)'
+            cv2.namedWindow(self.win_name, cv2.WINDOW_NORMAL)
+            cv2.resizeWindow(self.win_name, 960, 540)
+            self.image_pub = None
+            self.get_logger().info('Starting Local Mode: OpenCV display')
+        elif self.display_mode == 'remote':
+            qos_profile = QoSProfile(
+                reliability=ReliabilityPolicy.BEST_EFFORT,
+                durability=DurabilityPolicy.VOLATILE,
+                history=HistoryPolicy.KEEP_LAST,
+                depth=1,
+            )
+            self.image_pub = self.create_publisher(
+                CompressedImage, '/multi_view/image_compressed', qos_profile
+            )
+            self.get_logger().info('Starting Remote Mode: Publishing to /multi_view/image_compressed')
 
         # 카메라별 마지막 수신 프레임 캐시 (480x270)
         self.last_frames = [None] * self.num_cams
@@ -129,6 +143,9 @@ class MultiViewRemotePublisher(Node):
         self.latency_times = []
         self.window_size = 30
 
+        # 동기화 품질 이동 평균
+        self.sync_gap_times = []
+
         # ── CSV 메트릭 로깅 ──
         self.csv_file = None
         self.csv_writer = None
@@ -138,7 +155,7 @@ class MultiViewRemotePublisher(Node):
             self.csv_file = open(csv_path, 'w', newline='')
             self.csv_writer = csv.writer(self.csv_file)
             self.csv_writer.writerow(
-                ['time', 'cap_fps', 'det_fps', 'pub_fps', 'latency_ms']
+                ['time', 'cap_fps', 'det_fps', 'pub_fps', 'latency_ms', 'sync_gap_ms']
             )
             self.csv_file.flush()
             self.get_logger().info(f'Metrics logging enabled: {csv_path}')
@@ -225,15 +242,14 @@ class MultiViewRemotePublisher(Node):
     def _timer_callback(self):
         """15Hz: 캡처 프레임에 검출 오버레이를 덮어씌운 뒤 2x2 합성 → 직접 publish"""
 
-        capture_time = None
+        capture_timestamps = [None] * self.num_cams
 
         # 캡처 큐에서 최신 프레임 수집
         for i, q in enumerate(self.capture_queues):
             try:
                 ts, frame = q.get_nowait()
                 self.last_frames[i] = cv2.resize(frame, (480, 270))
-                if capture_time is None:
-                    capture_time = ts
+                capture_timestamps[i] = ts
 
                 # 검출 스레드에 원본 프레임 전달 (가득 차면 드롭)
                 dq = self.detect_queues[i]
@@ -246,9 +262,22 @@ class MultiViewRemotePublisher(Node):
             except queue.Empty:
                 pass
 
+        capture_time = capture_timestamps[0]
+
         # 4개 카메라 모두 최소 1프레임 수신 전까지 대기
         if any(f is None for f in self.last_frames) or capture_time is None:
             return
+
+        # 동기화 품질 계산
+        sync_gap_ms = 0.0
+        valid_timestamps = [t for t in capture_timestamps if t is not None]
+        if len(valid_timestamps) == self.num_cams:
+            sync_gap_ms = (max(valid_timestamps) - min(valid_timestamps)) * 1000
+
+        self.sync_gap_times.append(sync_gap_ms)
+        if len(self.sync_gap_times) > self.window_size:
+            self.sync_gap_times.pop(0)
+        avg_sync_gap_ms = sum(self.sync_gap_times) / len(self.sync_gap_times)
 
         # 검출 오버레이가 있으면 해당 카메라 프레임을 교체
         with self.detect_lock:
@@ -280,30 +309,41 @@ class MultiViewRemotePublisher(Node):
             avg_det_fps = sum(self.det_fps_per_cam) / self.num_cams
             cur_pub_fps = self.pub_fps
 
-        # 오버레이: 3가지 스레드별 FPS + Latency
+        # 오버레이: 3가지 스레드별 FPS + Latency + Sync
         fps_text = f'Cap: {avg_cap_fps:.1f} | Det: {avg_det_fps:.1f} | Pub: {cur_pub_fps:.1f}'
         cv2.putText(
-            combined, fps_text, (20, 40),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2,
+            combined, fps_text, (20, 30),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2,
         )
         cv2.putText(
-            combined, f'Latency: {latency_ms:.1f} ms', (20, 70),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2,
+            combined, f'Latency: {latency_ms:.1f} ms', (20, 55),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2,
+        )
+        cv2.putText(
+            combined, f'Sync: {avg_sync_gap_ms:.1f} ms', (20, 80),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 255), 2,
         )
 
-        # JPEG 인코딩 (단 1회) 후 직접 publish
-        ret_enc, encoded = cv2.imencode(
-            '.jpg', combined,
-            [int(cv2.IMWRITE_JPEG_QUALITY), self.jpeg_quality],
-        )
-        if not ret_enc:
-            return
+        # 모드별 출력 분기
+        if self.display_mode == 'local':
+            cv2.imshow(self.win_name, combined)
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord('q'):
+                rclpy.shutdown()
 
-        msg = CompressedImage()
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.format = 'jpeg'
-        msg.data = encoded.tobytes()
-        self.image_pub.publish(msg)
+        elif self.display_mode == 'remote':
+            ret_enc, encoded = cv2.imencode(
+                '.jpg', combined,
+                [int(cv2.IMWRITE_JPEG_QUALITY), self.jpeg_quality],
+            )
+            if not ret_enc:
+                return
+
+            msg = CompressedImage()
+            msg.header.stamp = self.get_clock().now().to_msg()
+            msg.format = 'jpeg'
+            msg.data = encoded.tobytes()
+            self.image_pub.publish(msg)
 
         # 이 스레드(타이머) 내부에서 독립적으로 Pub FPS 산출
         self._pub_count += 1
@@ -324,11 +364,13 @@ class MultiViewRemotePublisher(Node):
                 f'{avg_det_fps:.2f}',
                 f'{cur_pub_fps:.2f}',
                 f'{latency_ms:.2f}',
+                f'{avg_sync_gap_ms:.2f}',
             ])
             self.csv_file.flush()
 
     def _shutdown(self):
         """스레드 종료 + 카메라/CSV 자원 해제 (멱등)"""
+        cv2.destroyAllWindows()
         if not self.is_running:
             return
         self.is_running = False
