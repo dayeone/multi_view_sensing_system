@@ -1,6 +1,7 @@
 import rclpy
 from rclpy.node import Node
 import cv2
+import csv
 import os
 import time
 from datetime import datetime
@@ -23,16 +24,22 @@ class SingleCalibCollector(Node):
         self.frame_times = []
         self.window_size = 30 
         
-        # ROS 2 파라미터 선언 
+        # ROS 2 파라미터 선언
         # cam0의 깜빡임 문제를 해결하기 위해 기본 장치를 /dev/video0로 변경
         self.declare_parameter('device_path', '/dev/video0')
-        self.declare_parameter('use_gpu', False) 
+        self.declare_parameter('use_gpu', False)
         # 기본 실행 모드를 remote로 설정하여 별도 옵션 없이도 원격 송출되도록 함
-        self.declare_parameter('display_mode', 'remote') 
-        
+        self.declare_parameter('display_mode', 'remote')
+        self.declare_parameter('enable_metrics_log', False)
+
         self.device_path = self.get_parameter('device_path').get_parameter_value().string_value
         self.use_gpu = self.get_parameter('use_gpu').get_parameter_value().bool_value
         self.display_mode = self.get_parameter('display_mode').get_parameter_value().string_value
+        self.enable_metrics_log = (
+            self.get_parameter('enable_metrics_log')
+            .get_parameter_value()
+            .bool_value
+        )
 
         # 저장 폴더 경로 생성
         folder_name = self.device_path.split('/')[-1]
@@ -87,11 +94,42 @@ class SingleCalibCollector(Node):
         # 비동기 캡처 쓰레드 및 큐 설정 (60FPS 방어 핵심)
         self.frame_queue = queue.Queue(maxsize=1)
         self.is_running = True
+
+        # ── 스레드별 독립 FPS 측정 ──
+        # 각 스레드가 자신의 카운터/기준시각을 들고 1초 단위로 자기 FPS를 계산한 후
+        # 공유 변수(self.cap_fps / self.det_fps)에 기록한다.
+        self.fps_lock = threading.Lock()
+        self.cap_fps = 0.0
+        self.det_fps = 0.0
+
+        # 스레드 로컬 상태 (해당 스레드에서만 읽고 쓴다 → 락 불필요)
+        now = time.time()
+        self._cap_count = 0
+        self._cap_last_time = now
+        self._det_count = 0
+        self._det_last_time = now
+
+        # ── CSV 메트릭 로깅 ──
+        self.csv_file = None
+        self.csv_writer = None
+        if self.enable_metrics_log:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            csv_path = os.path.join(
+                os.getcwd(), f'calib_metrics_{folder_name}_{timestamp}.csv'
+            )
+            self.csv_file = open(csv_path, 'w', newline='')
+            self.csv_writer = csv.writer(self.csv_file)
+            self.csv_writer.writerow(
+                ['time', 'cap_fps', 'det_fps', 'latency_ms']
+            )
+            self.csv_file.flush()
+            self.get_logger().info(f'Metrics logging enabled: {csv_path}')
+
         self.capture_thread = threading.Thread(target=self.capture_loop, daemon=True)
         self.capture_thread.start()
 
         # 메인 루프 타이머 실행 (100Hz로 데이터 확인)
-        self.timer = self.create_timer(0.01, self.timer_callback) 
+        self.timer = self.create_timer(0.01, self.timer_callback)
 
     def remote_capture_cb(self, msg):
         """원격으로 토픽 명령 수신 시 캡처 플래그 활성화"""
@@ -110,6 +148,17 @@ class SingleCalibCollector(Node):
                         pass
                 # 캡처 시간과 프레임을 함께 큐에 저장
                 self.frame_queue.put((time.time(), frame))
+
+                # 이 스레드 내부에서 독립적으로 Cap FPS 산출
+                self._cap_count += 1
+                now = time.time()
+                elapsed = now - self._cap_last_time
+                if elapsed >= 1.0:
+                    fps = self._cap_count / elapsed
+                    with self.fps_lock:
+                        self.cap_fps = fps
+                    self._cap_count = 0
+                    self._cap_last_time = now
 
     def draw_grid(self, frame):
         """화면에 9등분 가이드 라인 그리기 (모니터링 편의성)"""
@@ -157,7 +206,7 @@ class SingleCalibCollector(Node):
         small_gray = cv2.resize(gray, (0, 0), fx=0.5, fy=0.5)
         flags = cv2.CALIB_CB_FAST_CHECK | cv2.CALIB_CB_ADAPTIVE_THRESH
         ret_corners, small_corners = cv2.findChessboardCorners(small_gray, self.checkerboard, flags)
-        
+
         if ret_corners:
             corners = small_corners * 2.0 # 축소된 좌표를 원본 크기로 복구
             criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
@@ -165,6 +214,34 @@ class SingleCalibCollector(Node):
             corners = cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1), criteria)
             # 화면에 검출된 코너 표시
             cv2.drawChessboardCorners(display_frame, self.checkerboard, corners, ret_corners)
+
+        # 검출 스레드(=타이머 콜백) 내부에서 독립적으로 Det FPS 산출
+        # 성공/실패 관계없이 findChessboardCorners 호출 완료마다 카운트
+        self._det_count += 1
+        det_done_time = time.time()
+        det_elapsed = det_done_time - self._det_last_time
+        if det_elapsed >= 1.0:
+            det_fps_now = self._det_count / det_elapsed
+            with self.fps_lock:
+                self.det_fps = det_fps_now
+            self._det_count = 0
+            self._det_last_time = det_done_time
+
+        # 캡처 시점 → 검출 완료 시점까지의 지연 (ms) — CSV 전용
+        detect_latency_ms = (det_done_time - start_decode) * 1000
+
+        # 매 타이머 반복마다 CSV 1행 기록
+        if self.csv_writer is not None:
+            with self.fps_lock:
+                cap_fps_now = self.cap_fps
+                det_fps_snap = self.det_fps
+            self.csv_writer.writerow([
+                f'{det_done_time:.6f}',
+                f'{cap_fps_now:.2f}',
+                f'{det_fps_snap:.2f}',
+                f'{detect_latency_ms:.2f}',
+            ])
+            self.csv_file.flush()
         
         # 화면에 상태 정보 출력 (FPS, 지연시간, 현재 모드)
         cv2.putText(display_frame, f"FPS: {fps:.1f}", (20, 50), 
@@ -208,14 +285,30 @@ class SingleCalibCollector(Node):
                 msg.data = encoded_img.tobytes()
                 self.image_pub.publish(msg)
 
-    def __del__(self):        
-        """소멸자: 쓰레드 및 카메라 자원을 안전하게 해제"""
+    def _shutdown(self):
+        """쓰레드 종료 + 카메라/CSV 자원 해제 (멱등)"""
+        if not getattr(self, 'is_running', False):
+            return
         self.is_running = False
         if hasattr(self, 'capture_thread') and self.capture_thread.is_alive():
             self.capture_thread.join(timeout=1.0)
-        if hasattr(self, 'cap') and self.cap.isOpened(): 
+        if hasattr(self, 'cap') and self.cap.isOpened():
             self.cap.release()
         cv2.destroyAllWindows()
+        if getattr(self, 'csv_file', None) is not None:
+            try:
+                self.csv_file.close()
+            except Exception:
+                pass
+            self.csv_file = None
+            self.csv_writer = None
+
+    def destroy_node(self):
+        self._shutdown()
+        super().destroy_node()
+
+    def __del__(self):
+        self._shutdown()
 
 def main(args=None):
     rclpy.init(args=args)
