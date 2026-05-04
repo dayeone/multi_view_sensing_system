@@ -1,10 +1,12 @@
 import rclpy
 from rclpy.node import Node
 import cv2
+import csv
 import os
 import time
 import threading
 import queue
+from datetime import datetime
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
 from sensor_msgs.msg import CompressedImage
 
@@ -19,6 +21,7 @@ class MultiViewRemotePublisher(Node):
             ['/dev/video0', '/dev/video4', '/dev/video8', '/dev/video12'],
         )
         self.declare_parameter('jpeg_quality', 70)
+        self.declare_parameter('enable_metrics_log', False)
 
         self.device_paths = (
             self.get_parameter('device_paths')
@@ -29,6 +32,11 @@ class MultiViewRemotePublisher(Node):
             self.get_parameter('jpeg_quality')
             .get_parameter_value()
             .integer_value
+        )
+        self.enable_metrics_log = (
+            self.get_parameter('enable_metrics_log')
+            .get_parameter_value()
+            .bool_value
         )
 
         self.is_running = True
@@ -100,21 +108,40 @@ class MultiViewRemotePublisher(Node):
         # 카메라별 마지막 수신 프레임 캐시 (480x270)
         self.last_frames = [None] * self.num_cams
 
-        # 스레드별 FPS 측정용 카운터와 락
+        # ── 스레드별 독립 FPS 측정 ──
+        # 각 스레드가 자신의 카운터/기준시각을 들고 1초 단위로 자기 FPS를 계산한 후
+        # 공유 변수(self.cap_fps_per_cam / det_fps_per_cam / pub_fps)에 기록한다.
         self.fps_lock = threading.Lock()
-        self.capture_counts = [0] * self.num_cams
-        self.detect_counts = [0] * self.num_cams
-        self.publish_count = 0
-        self.last_fps_calc_time = time.time()
+        self.cap_fps_per_cam = [0.0] * self.num_cams
+        self.det_fps_per_cam = [0.0] * self.num_cams
+        self.pub_fps = 0.0
 
-        # 1초 간격으로 계산된 FPS 값
-        self.avg_capture_fps = 0.0
-        self.avg_detect_fps = 0.0
-        self.publish_fps = 0.0
+        # 스레드 로컬 상태 (각 스레드에서만 읽고 쓴다 → 락 불필요)
+        now = time.time()
+        self._cap_counts = [0] * self.num_cams
+        self._cap_last_time = [now] * self.num_cams
+        self._det_counts = [0] * self.num_cams
+        self._det_last_time = [now] * self.num_cams
+        self._pub_count = 0
+        self._pub_last_time = now
 
         # Latency 이동 평균
         self.latency_times = []
         self.window_size = 30
+
+        # ── CSV 메트릭 로깅 ──
+        self.csv_file = None
+        self.csv_writer = None
+        if self.enable_metrics_log:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            csv_path = os.path.join(os.getcwd(), f'metrics_{timestamp}.csv')
+            self.csv_file = open(csv_path, 'w', newline='')
+            self.csv_writer = csv.writer(self.csv_file)
+            self.csv_writer.writerow(
+                ['time', 'cap_fps', 'det_fps', 'pub_fps', 'latency_ms']
+            )
+            self.csv_file.flush()
+            self.get_logger().info(f'Metrics logging enabled: {csv_path}')
 
         # 메인 타이머 15Hz: 캡처 프레임 합성 + 검출 오버레이 → 직접 publish
         self.timer = self.create_timer(1.0 / 15.0, self._timer_callback)
@@ -132,8 +159,17 @@ class MultiViewRemotePublisher(Node):
                     except queue.Empty:
                         pass
                 q.put((time.time(), frame))
-                with self.fps_lock:
-                    self.capture_counts[cam_idx] += 1
+
+                # 이 스레드 내부에서 독립적으로 Cap FPS 산출
+                self._cap_counts[cam_idx] += 1
+                now = time.time()
+                elapsed = now - self._cap_last_time[cam_idx]
+                if elapsed >= 1.0:
+                    fps = self._cap_counts[cam_idx] / elapsed
+                    with self.fps_lock:
+                        self.cap_fps_per_cam[cam_idx] = fps
+                    self._cap_counts[cam_idx] = 0
+                    self._cap_last_time[cam_idx] = now
 
     # ── 검출 스레드 (카메라당 1개) ──
     def _detect_loop(self, cam_idx):
@@ -174,26 +210,20 @@ class MultiViewRemotePublisher(Node):
                 with self.detect_lock:
                     self.detect_overlays[cam_idx] = None
 
-            # 검출 시도 1회 완료 시점에 카운터 증가
-            with self.fps_lock:
-                self.detect_counts[cam_idx] += 1
+            # 이 스레드 내부에서 독립적으로 Det FPS 산출
+            self._det_counts[cam_idx] += 1
+            now = time.time()
+            elapsed = now - self._det_last_time[cam_idx]
+            if elapsed >= 1.0:
+                fps = self._det_counts[cam_idx] / elapsed
+                with self.fps_lock:
+                    self.det_fps_per_cam[cam_idx] = fps
+                self._det_counts[cam_idx] = 0
+                self._det_last_time[cam_idx] = now
 
     # ── 메인 타이머 콜백: 합성 + 오버레이 + 직접 publish ──
     def _timer_callback(self):
         """15Hz: 캡처 프레임에 검출 오버레이를 덮어씌운 뒤 2x2 합성 → 직접 publish"""
-
-        # 1초마다 스레드별 FPS 갱신
-        now = time.time()
-        elapsed = now - self.last_fps_calc_time
-        if elapsed >= 1.0:
-            with self.fps_lock:
-                self.avg_capture_fps = sum(self.capture_counts) / self.num_cams / elapsed
-                self.avg_detect_fps = sum(self.detect_counts) / self.num_cams / elapsed
-                self.publish_fps = self.publish_count / elapsed
-                self.capture_counts = [0] * self.num_cams
-                self.detect_counts = [0] * self.num_cams
-                self.publish_count = 0
-            self.last_fps_calc_time = now
 
         capture_time = None
 
@@ -244,8 +274,14 @@ class MultiViewRemotePublisher(Node):
             self.latency_times.pop(0)
         latency_ms = sum(self.latency_times) / len(self.latency_times)
 
+        # 4채널 평균 FPS 계산 (각 스레드가 기록한 값을 읽기만 함)
+        with self.fps_lock:
+            avg_cap_fps = sum(self.cap_fps_per_cam) / self.num_cams
+            avg_det_fps = sum(self.det_fps_per_cam) / self.num_cams
+            cur_pub_fps = self.pub_fps
+
         # 오버레이: 3가지 스레드별 FPS + Latency
-        fps_text = f'Cap: {self.avg_capture_fps:.1f} | Det: {self.avg_detect_fps:.1f} | Pub: {self.publish_fps:.1f}'
+        fps_text = f'Cap: {avg_cap_fps:.1f} | Det: {avg_det_fps:.1f} | Pub: {cur_pub_fps:.1f}'
         cv2.putText(
             combined, fps_text, (20, 40),
             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2,
@@ -269,11 +305,32 @@ class MultiViewRemotePublisher(Node):
         msg.data = encoded.tobytes()
         self.image_pub.publish(msg)
 
-        with self.fps_lock:
-            self.publish_count += 1
+        # 이 스레드(타이머) 내부에서 독립적으로 Pub FPS 산출
+        self._pub_count += 1
+        now = time.time()
+        elapsed = now - self._pub_last_time
+        if elapsed >= 1.0:
+            fps = self._pub_count / elapsed
+            with self.fps_lock:
+                self.pub_fps = fps
+            self._pub_count = 0
+            self._pub_last_time = now
 
-    def __del__(self):
-        """소멸자: 스레드 종료 및 카메라 자원 해제"""
+        # 매 publish마다 CSV 1행 기록
+        if self.csv_writer is not None:
+            self.csv_writer.writerow([
+                f'{time.time():.6f}',
+                f'{avg_cap_fps:.2f}',
+                f'{avg_det_fps:.2f}',
+                f'{cur_pub_fps:.2f}',
+                f'{latency_ms:.2f}',
+            ])
+            self.csv_file.flush()
+
+    def _shutdown(self):
+        """스레드 종료 + 카메라/CSV 자원 해제 (멱등)"""
+        if not self.is_running:
+            return
         self.is_running = False
         for t in self.detect_threads:
             if t.is_alive():
@@ -284,6 +341,20 @@ class MultiViewRemotePublisher(Node):
         for cap in self.caps:
             if cap.isOpened():
                 cap.release()
+        if self.csv_file is not None:
+            try:
+                self.csv_file.close()
+            except Exception:
+                pass
+            self.csv_file = None
+            self.csv_writer = None
+
+    def destroy_node(self):
+        self._shutdown()
+        super().destroy_node()
+
+    def __del__(self):
+        self._shutdown()
 
 
 def main(args=None):
