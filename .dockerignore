@@ -1,0 +1,20 @@
+# Build artifacts
+build/
+install/
+log/
+
+# Git
+.git/
+.gitignore
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE
+.vscode/
+.idea/
+
+# 대용량 데이터 (필요 시 조정)
+*.bag
