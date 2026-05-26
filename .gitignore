@@ -5,3 +5,6 @@ __pycache__/
 .vscode/
 *.egg-info/
 calib_data/
+quick_capture_data/
+.env
+quick_capture/sample.jpg
