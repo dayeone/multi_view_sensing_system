@@ -5,3 +5,11 @@ __pycache__/
 .vscode/
 *.egg-info/
 calib_data/
+
+# 가상환경
+.venv/
+
+# quick_capture 산출물 (소스 .py는 추적 유지)
+quick_capture_data/
+quick_capture/models/
+quick_capture/detect_out_session_*/
