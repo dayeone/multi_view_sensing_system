@@ -51,6 +51,14 @@ DATA_DIR = "/home/jay/pest_control_ws/quick_capture_data"
 RESOLUTION = (1280, 720)
 JPEG_QUALITY = 85
 
+# 카메라에 '요청'할 프레임레이트(fps). 카메라가 지원해도 실제로 들어오는지는
+# 별도로 측정해야 한다(아래 camera_worker의 실효 fps 출력 참고).
+# 이 값은 gap의 '천장'만 낮출 뿐, gap 자체가 줄어드는지는 sync_log.csv로 검증한다.
+TARGET_FPS = 60
+
+# camera_worker가 시작 직후 이 시간(초) 동안 들어온 프레임 수로 실효 fps를 1회 계산한다.
+FPS_MEASURE_WINDOW_S = 3.0
+
 # 프레임 '나이'가 이 값을 넘으면 묵은 사진으로 보고 경고한다(초).
 # 60FPS에서 정상 프레임은 약 16.7ms 이내이므로, 0.1초(약 6프레임)를
 # 넘으면 해당 카메라가 잠깐 멈춘 것으로 간주한다.
@@ -88,6 +96,9 @@ def open_camera(device_idx):
     cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, RESOLUTION[0])
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, RESOLUTION[1])
+    # fps를 명시적으로 요청한다. 미지정 시 드라이버 기본값(보통 30)으로 잡혀
+    # gap의 천장이 높아진다. 단, 요청일 뿐 보장은 아니므로 실효 fps를 따로 측정한다.
+    cap.set(cv2.CAP_PROP_FPS, TARGET_FPS)
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     return cap
 
@@ -105,11 +116,26 @@ def camera_worker(device_idx):
         return
     print(f"[OK] /dev/video{device_idx} 열림")
 
+    # 실효 fps 측정용: 시작 직후 일정 시간 동안 들어온 프레임 수를 센다.
+    # fps 설정값(요청)이 실제로 반영됐는지 '관문 1'을 확인하기 위함이다.
+    fps_t0 = time.monotonic()
+    fps_count = 0
+    fps_reported = False
+
     while not stop_event.is_set():
         ret, frame = cap.read()
         if not ret:
             time.sleep(0.005)
             continue
+
+        # 실효 fps 1회 출력 (측정 창이 끝나면 한 번만 보고)
+        if not fps_reported:
+            fps_count += 1
+            elapsed = time.monotonic() - fps_t0
+            if elapsed >= FPS_MEASURE_WINDOW_S:
+                print(f"[fps] cam{device_idx} ≈ {fps_count / elapsed:.1f} "
+                      f"(요청 {TARGET_FPS})")
+                fps_reported = True
 
         # 캡처 직후 두 종류의 시각을 함께 기록한다.
         #   - monotonic: gap/age 계산용(되감기지 않는 시계)
