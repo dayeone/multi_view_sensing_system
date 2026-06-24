@@ -29,10 +29,9 @@ ROS 2 Humble (Python / ament_python) 워크스페이스. 4채널 Logitech BRIO �
 
 ## 수정 금지 코드
 
-- `calib_data_collector.py`: SubPix 영역 일체. 0.5× downscale → `findChessboardCorners` → full-res `cornerSubPix` 파이프라인 baseline 검증 완료.
-- `calib_calc.py`, `calib_viewer.py`: 현재 안정 상태. 변경 사유가 명시되지 않으면 수정하지 않는다.
+- `calib_data_collector.py`의 SubPix 영역(0.5× downscale → `findChessboardCorners` → full-res `cornerSubPix` 파이프라인): 캘리브레이션 정확도의 토대이므로 수정하지 않는다. 이 영역 외(카메라 오픈·속성 설정 등)는 수정 가능하다.
 
-수정 가능: `camera_streamer.py` (namedWindow 중복 및 win_name overwrite 버그 수정 작업 중).
+수정 가능: `calib_calc.py`, `calib_viewer.py`, `camera_streamer.py`, `recorder.py` 등. 변경 시 사유를 commit 메시지에 남긴다.
 
 ## 응급 확인 키워드
 
