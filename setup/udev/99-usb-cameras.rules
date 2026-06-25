@@ -1,0 +1,22 @@
+# BRIO 4채널 카메라 고정 심볼릭 링크 (/dev/cam0~3)
+#
+# 각 BRIO는 /dev/videoN 노드를 4개(index 0~3) 만들며 모두 같은 시리얼을 가진다.
+# 시리얼만으로 링크하면 영상 캡처가 아닌 메타데이터 노드를 잡아 흑백/깜빡임이 생긴다.
+# 따라서 ATTR{index}=="0" (메인 영상 캡처 노드) 조건을 함께 건다.
+#
+# 적용:
+#   sudo cp setup/udev/99-usb-cameras.rules /etc/udev/rules.d/99-usb-cameras.rules
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+#   ls -l /dev/cam*
+
+# cam0 = Front Left
+SUBSYSTEM=="video4linux", ATTRS{serial}=="64DC1053", ATTR{index}=="0", SYMLINK+="cam0"
+
+# cam1 = Front Right
+SUBSYSTEM=="video4linux", ATTRS{serial}=="F7B852EA", ATTR{index}=="0", SYMLINK+="cam1"
+
+# cam2 = Back Left
+SUBSYSTEM=="video4linux", ATTRS{serial}=="A4E952FD", ATTR{index}=="0", SYMLINK+="cam2"
+
+# cam3 = Back Right
+SUBSYSTEM=="video4linux", ATTRS{serial}=="1049D7BA", ATTR{index}=="0", SYMLINK+="cam3"
