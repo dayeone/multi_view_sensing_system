@@ -59,6 +59,12 @@ TARGET_FPS = 60
 # camera_worker가 시작 직후 이 시간(초) 동안 들어온 프레임 수로 실효 fps를 1회 계산한다.
 FPS_MEASURE_WINDOW_S = 3.0
 
+# 오토포커스를 끄고 초점을 고정한다. 초점이 변하면 intrinsic(초점거리)도 변해
+# 공간 정합 신뢰도가 떨어지므로, 캘리브레이션과 촬영이 같은 고정 초점을 써야 한다.
+# FOCUS_ABSOLUTE: 0(원거리)~255(근거리), step 5. --focus로 변경하며 작업거리에서 튜닝한다.
+AUTOFOCUS_OFF = True
+FOCUS_ABSOLUTE = 0
+
 # 프레임 '나이'가 이 값을 넘으면 묵은 사진으로 보고 경고한다(초).
 # 60FPS에서 정상 프레임은 약 16.7ms 이내이므로, 0.1초(약 6프레임)를
 # 넘으면 해당 카메라가 잠깐 멈춘 것으로 간주한다.
@@ -100,6 +106,13 @@ def open_camera(device_idx):
     # gap의 천장이 높아진다. 단, 요청일 뿐 보장은 아니므로 실효 fps를 따로 측정한다.
     cap.set(cv2.CAP_PROP_FPS, TARGET_FPS)
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    # 오토포커스 OFF + 초점 고정 (intrinsic 안정화, 공간 정합 신뢰도 확보).
+    # 설정 직후 실제 반영값을 읽어 출력해, 백엔드가 값을 무시하지 않았는지 검증한다.
+    if AUTOFOCUS_OFF:
+        cap.set(cv2.CAP_PROP_AUTOFOCUS, 0)
+        cap.set(cv2.CAP_PROP_FOCUS, FOCUS_ABSOLUTE)
+        print(f"[focus] video{device_idx} autofocus={cap.get(cv2.CAP_PROP_AUTOFOCUS)} "
+              f"focus={cap.get(cv2.CAP_PROP_FOCUS)} (요청 {FOCUS_ABSOLUTE})")
     return cap
 
 
@@ -241,12 +254,16 @@ def matcher_worker():
 
 
 def main():
-    global recording, session_dir, save_interval, gap_samples, stale_set_count
+    global recording, session_dir, save_interval, gap_samples, stale_set_count, FOCUS_ABSOLUTE
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--hz", type=float, default=2.0,
                         help="캡처 주기 Hz (기본 2.0)")
+    parser.add_argument("--focus", type=int, default=FOCUS_ABSOLUTE,
+                        help="고정 초점값 0-255, step 5 (오토포커스 OFF, 작업거리에서 튜닝)")
     args = parser.parse_args()
+
+    FOCUS_ABSOLUTE = args.focus
 
     if args.hz <= 0:
         print("[ERROR] --hz 값은 0보다 커야 합니다.")
@@ -259,6 +276,7 @@ def main():
     print(f"해상도: {RESOLUTION[0]}x{RESOLUTION[1]} MJPG")
     print(f"저장 주기: {args.hz} Hz  (간격 {save_interval:.2f}초)")
     print(f"묵은 사진 임계: {STALE_AGE_S * 1000:.0f}ms")
+    print(f"초점: 오토포커스 {'OFF, 고정 ' + str(FOCUS_ABSOLUTE) if AUTOFOCUS_OFF else 'ON'}")
     print(f"저장 위치: {DATA_DIR}")
     print("=" * 50)
     print("명령어: s=시작 / t=중지 / q=종료")

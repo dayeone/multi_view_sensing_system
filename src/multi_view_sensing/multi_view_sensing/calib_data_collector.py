@@ -68,6 +68,10 @@ class SingleCalibCollector(Node):
                 self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
                 self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
                 self.cap.set(cv2.CAP_PROP_FPS, 60)
+                # 오토포커스 OFF + 초점 고정 (intrinsic 안정화, 공간 정합용).
+                # 초점값은 recorder.py의 --focus 값과 반드시 동일하게 유지할 것.
+                self.cap.set(cv2.CAP_PROP_AUTOFOCUS, 0)
+                self.cap.set(cv2.CAP_PROP_FOCUS, 0)
         
         if not self.cap.isOpened():
             self.get_logger().error(f'Failed to open camera: {self.device_path}')
