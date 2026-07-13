@@ -52,7 +52,7 @@ source install/setup.bash
 
 # 개별 노드 실행
 ros2 run multi_view_sensing streamer
-ros2 run multi_view_sensing calib_collector --ros-args -p device_path:=/dev/video0 -p display_mode:=local
+ros2 run multi_view_sensing calib_collector --ros-args -p device_path:=/dev/cam1 -p display_mode:=local
 ros2 run multi_view_sensing multi_view_remote_publisher --ros-args -p display_mode:=local
 
 # 4채널 캘리브레이션 collector 일괄 실행
@@ -76,7 +76,7 @@ colcon test-result --verbose
 ### 노드 (`setup.py` 진입점 정의)
 
 - **`streamer`** → `camera_streamer.py:MultiCameraLite`: 4채널 단순 뷰어. 인덱스 0,4,8,12로 카메라 오픈, OpenCV로 2x2 그리드 표시. `s` 키로 스냅샷 저장.
-- **`calib_collector`** → `calib_data_collector.py:SingleCalibCollector`: 채널별 캘리브레이션 이미지 수집기. 7x10 체커보드 실시간 검출. `local` (OpenCV 윈도우) / `remote` (`{device}/image_compressed` 토픽 발행) 두 모드 지원. GStreamer/NVDEC GPU 모드 지원. 백그라운드 캡처 스레드 + 100Hz 타이머 콜백 검출. `c` 키 또는 `{device}/capture_cmd` 토픽으로 캡처 트리거.
+- **`calib_collector`** → `calib_data_collector.py:SingleCalibCollector`: 채널별 캘리브레이션 이미지 수집기. 7x9 체커보드 실시간 검출. `local` (OpenCV 윈도우) / `remote` (`{device}/image_compressed` 토픽 발행) 두 모드 지원. GStreamer/NVDEC GPU 모드 지원. 백그라운드 캡처 스레드 + 100Hz 타이머 콜백 검출. `c` 키 또는 `{device}/capture_cmd` 토픽으로 캡처 트리거.
 - **`multi_view_remote_publisher`** → `multi_view_remote_publisher.py:MultiViewRemotePublisher`: 4채널 멀티스레드 publisher. 카메라당 3-tier 스레드(capture → detect → 메인 타이머 15Hz 합성). `/multi_view/image_compressed` 발행. 스레드별 FPS(capture/detect/publish), latency, 카메라 간 sync gap 추적.
 
 ### 스탠드얼론 스크립트
@@ -86,7 +86,7 @@ colcon test-result --verbose
 
 ### 데이터 디렉토리
 
-- `calib_data/`: 채널별 원본 캘리브레이션 이미지 (`cam0/`–`cam3/`, `video0/`–`video12/`)
+- `calib_data/`: 채널별 원본 캘리브레이션 이미지 (`cam1/`–`cam4/`)
 - `calib_params/`: YAML 캘리브레이션 결과 (`cam{N}_params.yaml`, 키: `camera_matrix`, `dist_coeff`, `rms_error`)
 - `captured_images/`: streamer 노드 스냅샷
 - `metrics_logs/`: CSV 성능 로그 (cap/det/pub FPS, latency, sync gap)
@@ -99,7 +99,8 @@ colcon test-result --verbose
 
 | 파라미터 | 노드 | 기본값 | 설명 |
 |---|---|---|---|
-| `device_path` / `device_paths` | calib_collector / multi_view | `/dev/video0` / `[0,4,8,12]` | 카메라 디바이스 |
+| `device_path` | calib_collector | `/dev/cam1` | 카메라 디바이스 |
+| `device_paths` | multi_view | `[0,4,8,12]` | 카메라 디바이스 (순서 기반, 미전환 — 별도 할일) |
 | `display_mode` | both | `remote` / `local` | `local` = OpenCV 윈도우, `remote` = ROS 토픽 |
 | `jpeg_quality` | multi_view | 70 | JPEG 압축 품질 |
 | `enable_metrics_log` | both | false | CSV 성능 로그 활성화 |
@@ -108,7 +109,7 @@ colcon test-result --verbose
 ## 컨벤션
 
 - 코드 주석과 로그 메시지는 한국어 우선
-- 체커보드: 7x10 internal corner, 15mm square
+- 체커보드: 7x9 internal corner, 20mm square
 - 카메라 해상도: 1280x720, MJPG 코덱
 - 체커보드 검출은 0.5× downscale 후 좌표 역스케일 (수정 금지 영역 참고)
 - 디스플레이 합성: 카메라당 480x270, 전체 그리드 960x540

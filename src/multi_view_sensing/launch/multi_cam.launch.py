@@ -8,23 +8,13 @@ from launch_ros.actions import Node
 def generate_launch_description():
     enable_metrics_log = LaunchConfiguration('enable_metrics_log')
 
-    # 4개의 독립된 카메라 노드 정의
-    cam0_node = Node(
-        package='multi_view_sensing',
-        executable='calib_collector',
-        name='cam0_collector',
-        parameters=[{
-            'device_path': '/dev/video0',
-            'enable_metrics_log': enable_metrics_log,
-        }],
-        output='screen'
-    )
+    # 4개의 독립된 카메라 노드 정의 (device_path는 udev 시리얼 고정 심볼릭 링크 사용)
     cam1_node = Node(
         package='multi_view_sensing',
         executable='calib_collector',
         name='cam1_collector',
         parameters=[{
-            'device_path': '/dev/video4',
+            'device_path': '/dev/cam1',
             'enable_metrics_log': enable_metrics_log,
         }],
         output='screen'
@@ -34,7 +24,7 @@ def generate_launch_description():
         executable='calib_collector',
         name='cam2_collector',
         parameters=[{
-            'device_path': '/dev/video8',
+            'device_path': '/dev/cam2',
             'enable_metrics_log': enable_metrics_log,
         }],
         output='screen'
@@ -44,7 +34,17 @@ def generate_launch_description():
         executable='calib_collector',
         name='cam3_collector',
         parameters=[{
-            'device_path': '/dev/video12',
+            'device_path': '/dev/cam3',
+            'enable_metrics_log': enable_metrics_log,
+        }],
+        output='screen'
+    )
+    cam4_node = Node(
+        package='multi_view_sensing',
+        executable='calib_collector',
+        name='cam4_collector',
+        parameters=[{
+            'device_path': '/dev/cam4',
             'enable_metrics_log': enable_metrics_log,
         }],
         output='screen'
@@ -57,8 +57,8 @@ def generate_launch_description():
             default_value='false',
             description='Log per-iteration metrics (cap/det FPS, latency) to CSV',
         ),
-        cam0_node,
         cam1_node,
         cam2_node,
-        cam3_node
+        cam3_node,
+        cam4_node
     ])

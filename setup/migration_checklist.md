@@ -20,20 +20,20 @@
 ### C-1. 카메라 식별 (udev 시리얼)
 - [ ] 새 카메라 시리얼 확인:
       `for n in /dev/video*; do echo -n "$n "; udevadm info -a -n $n | grep -m1 serial; done`
-- [ ] `setup/udev/99-usb-cameras.rules`의 serial 4개를 새 값으로 교체 (cam0~3 ↔ 물리 위치 매핑 확인)
+- [ ] `setup/udev/99-usb-cameras.rules`의 serial 4개를 새 값으로 교체 (cam1~4 ↔ 물리 위치 매핑 확인)
 - [ ] 설치 + 적용:
       `sudo cp setup/udev/99-usb-cameras.rules /etc/udev/rules.d/`
       `sudo udevadm control --reload-rules && sudo udevadm trigger --subsystem-match=video4linux --action=add`
-- [ ] `ls -l /dev/cam*` 로 cam0~3가 index0 캡처 노드를 가리키는지 + 영상 컬러·무깜빡임 확인
+- [ ] `ls -l /dev/cam*` 로 cam1~4가 index0 캡처 노드를 가리키는지 + 영상 컬러·무깜빡임 확인
 
 ### C-2. 초점 재측정 (작업거리 변경됨)
 - [ ] 보드를 작업거리에 고정 (평판, 안 휘게)
-- [ ] cam0~3 각각: `python3 quick_capture/focus_finder.py --device /dev/camN`
+- [ ] cam1~4 각각: `python3 quick_capture/focus_finder.py --device /dev/camN`
 - [ ] `config/camera_focus.yaml`을 새 추천값으로 갱신
 
 ### C-3. intrinsic 재캘리브레이션
 - [ ] (필요시) 옛 calib_data 백업/비우기
-- [ ] cam0~3 촬영: `python3 quick_capture/calib_capture.py --device /dev/camN`
+- [ ] cam1~4 촬영: `python3 quick_capture/calib_capture.py --device /dev/camN`
       (평판 보드 / 전체 보임 / **모서리·가장자리까지 커버** / 적당한 각도 / 선명)
 - [ ] 계산: `python3 src/multi_view_sensing/multi_view_sensing/calib_calc.py`
 - [ ] RMS 확인 (목표 <1.0px, 가능하면 <0.8px)

@@ -12,8 +12,8 @@ focus_finder.py - 카메라의 최적 고정 초점값(focus)을 찾는 도구
   - 대상이 화면에 크게, 흔들리지 않게 둔다. (움직이면 선명도 측정이 흔들림)
 
 [사용법]
-  python3 quick_capture/focus_finder.py                      # /dev/cam0, 0~255 step5
-  python3 quick_capture/focus_finder.py --device /dev/cam1   # 다른 카메라
+  python3 quick_capture/focus_finder.py                      # /dev/cam1, 0~255 step5
+  python3 quick_capture/focus_finder.py --device /dev/cam2   # 다른 카메라
   python3 quick_capture/focus_finder.py --step 10 --preview  # 더 빠르게 + 미리보기 창
 
 [결과]
@@ -44,7 +44,7 @@ def grab_stable(cap, warmup=8):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--device", default="/dev/cam0", help="카메라 장치 (기본 /dev/cam0)")
+    parser.add_argument("--device", default="/dev/cam1", help="카메라 장치 (기본 /dev/cam1)")
     parser.add_argument("--start", type=int, default=0, help="focus 시작값 (기본 0)")
     parser.add_argument("--end", type=int, default=255, help="focus 끝값 (기본 255)")
     parser.add_argument("--step", type=int, default=5, help="focus 증가 간격 (기본 5)")
@@ -52,7 +52,7 @@ def main():
     parser.add_argument("--outdir", default=None, help="저장 폴더 (기본: focus_scan/<카메라명>)")
     args = parser.parse_args()
     show_preview = not args.no_preview   # 기본은 모니터에 창을 띄워 보면서 진행
-    # 카메라별로 폴더를 나눠 저장(예: focus_scan/cam0) → 다른 카메라 결과를 덮어쓰지 않음
+    # 카메라별로 폴더를 나눠 저장(예: focus_scan/cam1) → 다른 카메라 결과를 덮어쓰지 않음
     if args.outdir is None:
         args.outdir = os.path.join("focus_scan", os.path.basename(args.device))
 

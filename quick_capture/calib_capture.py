@@ -9,10 +9,10 @@ calib_capture.py - 체커보드 캘리브레이션 이미지 촬영기 (intrinsi
 
 [준비]
   - config/camera_focus.yaml 에 해당 카메라 초점값이 있어야 함
-  - 체커보드(내부 코너 7x10) 준비
+  - 체커보드(내부 코너 7x9) 준비
 
 [사용법]
-  python3 quick_capture/calib_capture.py --device /dev/cam0
+  python3 quick_capture/calib_capture.py --device /dev/cam1
 
 [조작 (영상 창에서)]
   c : 현재 화면 저장 (보드 전체가 검출됐을 때만)
@@ -24,7 +24,7 @@ import argparse
 import yaml
 from datetime import datetime
 
-CHECKERBOARD = (7, 10)  # 내부 코너 개수 (calib_calc.py와 동일해야 함)
+CHECKERBOARD = (7, 9)  # 내부 코너 개수 (calib_calc.py와 동일해야 함)
 
 
 def load_focus(config_path, cam_name):
@@ -36,12 +36,12 @@ def load_focus(config_path, cam_name):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--device", default="/dev/cam0", help="카메라 장치 (기본 /dev/cam0)")
+    parser.add_argument("--device", default="/dev/cam1", help="카메라 장치 (기본 /dev/cam1)")
     parser.add_argument("--config", default="config/camera_focus.yaml", help="초점값 YAML 경로")
     parser.add_argument("--outdir", default=None, help="저장 폴더 (기본: calib_data/<카메라명>)")
     args = parser.parse_args()
 
-    cam_name = os.path.basename(args.device)             # /dev/cam0 -> cam0
+    cam_name = os.path.basename(args.device)             # /dev/cam1 -> cam1
     if args.outdir is None:
         args.outdir = os.path.join("calib_data", cam_name)
     os.makedirs(args.outdir, exist_ok=True)

@@ -6,10 +6,10 @@ import argparse
 import yaml
 
 # 체커보드 정보 (촬영한 보드와 동일해야 함)
-CHECKERBOARD = (7, 10)  # 내부 코너 개수
-SQUARE_SIZE = 15.0      # mm 단위
+CHECKERBOARD = (7, 9)  # 내부 코너 개수
+SQUARE_SIZE = 20.0      # mm 단위
 
-# 3D 실제 좌표 (0,0,0), (15,0,0), (30,0,0) ...
+# 3D 실제 좌표 (0,0,0), (20,0,0), (40,0,0) ...
 objp = np.zeros((CHECKERBOARD[0] * CHECKERBOARD[1], 3), np.float32)
 objp[:, :2] = np.mgrid[0:CHECKERBOARD[0], 0:CHECKERBOARD[1]].T.reshape(-1, 2)
 objp *= SQUARE_SIZE

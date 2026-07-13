@@ -91,7 +91,7 @@ class MultiViewRemotePublisher(Node):
             self.detect_queues.append(queue.Queue(maxsize=1))
 
         # ── 2단계: 검출 스레드 (카메라당 1개, 독립적으로 체커보드 검출) ──
-        self.checkerboard = (7, 10)
+        self.checkerboard = (7, 9)
         self.detect_threads = []
         for i in range(self.num_cams):
             t = threading.Thread(

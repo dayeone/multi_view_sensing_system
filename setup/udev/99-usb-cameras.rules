@@ -1,22 +1,24 @@
-# BRIO 4채널 카메라 고정 심볼릭 링크 (/dev/cam0~3)
+# BRIO 4채널 카메라 고정 심볼릭 링크 (/dev/cam1~4)
 #
 # 각 BRIO는 /dev/videoN 노드를 4개(index 0~3) 만들며 모두 같은 시리얼을 가진다.
 # 시리얼만으로 링크하면 영상 캡처가 아닌 메타데이터 노드를 잡아 흑백/깜빡임이 생긴다.
 # 따라서 ATTR{index}=="0" (메인 영상 캡처 노드) 조건을 함께 건다.
+#
+# Ranger mini 리그 기준 시리얼 (2026-07-13, colcon_ws/brio_multi_pkg rviz2로 위치 확인 완료).
 #
 # 적용:
 #   sudo cp setup/udev/99-usb-cameras.rules /etc/udev/rules.d/99-usb-cameras.rules
 #   sudo udevadm control --reload-rules && sudo udevadm trigger
 #   ls -l /dev/cam*
 
-# cam0 = Front Left
-SUBSYSTEM=="video4linux", ATTRS{serial}=="64DC1053", ATTR{index}=="0", SYMLINK+="cam0"
+# cam1 = Left Bottom
+SUBSYSTEM=="video4linux", ATTRS{serial}=="3A51684E", ATTR{index}=="0", SYMLINK+="cam1"
 
-# cam1 = Front Right
-SUBSYSTEM=="video4linux", ATTRS{serial}=="F7B852EA", ATTR{index}=="0", SYMLINK+="cam1"
+# cam2 = Left Top
+SUBSYSTEM=="video4linux", ATTRS{serial}=="1FAE2749", ATTR{index}=="0", SYMLINK+="cam2"
 
-# cam2 = Back Left
-SUBSYSTEM=="video4linux", ATTRS{serial}=="A4E952FD", ATTR{index}=="0", SYMLINK+="cam2"
+# cam3 = Right Bottom
+SUBSYSTEM=="video4linux", ATTRS{serial}=="E9641DF5", ATTR{index}=="0", SYMLINK+="cam3"
 
-# cam3 = Back Right
-SUBSYSTEM=="video4linux", ATTRS{serial}=="1049D7BA", ATTR{index}=="0", SYMLINK+="cam3"
+# cam4 = Right Top
+SUBSYSTEM=="video4linux", ATTRS{serial}=="FA3B02ED", ATTR{index}=="0", SYMLINK+="cam4"
