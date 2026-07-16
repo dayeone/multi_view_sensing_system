@@ -1,0 +1,7 @@
+# 데이터 취득에만 추가로 필요한 패키지.
+# 학습/추론 스택(ultralytics, torch, opencv)은 conda `strawberry` 환경에 이미 존재.
+#
+# 설치는 CLAUDE.md 보안 규칙상 사용자 승인 후 수동 실행:
+#   conda activate strawberry && pip install -r requirements.txt
+
+kagglehub>=0.3      # Apache-2.0, Kaggle/Google. 데이터셋 다운로드용. 미사용 시 --manual 경로 사용 가능

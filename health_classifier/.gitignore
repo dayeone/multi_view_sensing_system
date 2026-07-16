@@ -1,0 +1,9 @@
+# 데이터·모델 산출물은 git 제외 (용량 + 저작권)
+datasets/raw/
+datasets/binary/
+models/
+runs/
+*.pt
+!../quick_capture/models/strawberry_yolo11s.pt
+__pycache__/
+*.pyc
