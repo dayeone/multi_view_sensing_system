@@ -19,14 +19,18 @@ quick_capture/
 
 ../quick_capture_data/        # 캡처 데이터 (git 제외)
 └── session_YYYYMMDD_HHMMSS/
-    ├── cam0/
-    │   ├── 000000_<timestamp>.jpg
+    ├── sync_log.csv          # 세트별 sync gap(ms)·카메라별 age·stale 기록
+    ├── cam1/                 # 물리 위치 기준(cam1=좌하 … cam4=우상, /dev/cam1~4)
+    │   ├── set000000_cam1_<timestamp>.jpg
     │   ├── uploaded/        # 업로드 성공 후 이동
     │   └── failed/          # 업로드 실패 격리
-    ├── cam4/
-    ├── cam8/
-    └── cam12/
+    ├── cam2/
+    ├── cam3/
+    └── cam4/
 ```
+
+> 폴더명은 이제 **물리 위치 기준 cam1~4**이다. 예전의 `cam0/4/8/12`(비디오 인덱스 기준)에서
+> udev 심볼릭 링크(`/dev/cam1~4`) 기반으로 전환됨.
 
 ---
 
@@ -36,8 +40,8 @@ quick_capture/
 
 기본 실행 (2 Hz):
 ```bash
-cd /home/jay/pest_control_ws/quick_capture
-python3 recorder.py
+cd ~/pest_control_ws
+python3 quick_capture/recorder.py
 ```
 
 캡처 주기 변경:
@@ -55,7 +59,7 @@ python3 recorder.py --hz 0.5    # 2초당 1장
 
 명시한 세션 폴더만 업로드:
 ```bash
-python3 uploader.py /home/jay/pest_control_ws/quick_capture_data/session_20260526_103000
+python3 uploader.py ~/pest_control_ws/quick_capture_data/session_20260526_103000
 ```
 
 - 시작 전 `yes` 입력 확인 (오업로드 방지)
@@ -67,7 +71,7 @@ python3 uploader.py /home/jay/pest_control_ws/quick_capture_data/session_2026052
 
 ## 시스템 구성
 
-- **카메라**: Logitech BRIO × 4 (`/dev/video0,4,8,12`, 1280×720 MJPG)
+- **카메라**: Logitech BRIO × 4 (`/dev/cam1~4`, udev 시리얼 심볼릭 링크, 1280×720 MJPG)
 - **API**: HKS Agrix HMAC-SHA256, 2단계 업로드 (file → imageset)
 - **인증**: `.env` 파일의 `ACCESS_KEY`, `SECRET_KEY`, `AIDATASET_ID`
 

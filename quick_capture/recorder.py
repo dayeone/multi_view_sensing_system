@@ -3,12 +3,19 @@
 recorder.py - 4채널 BRIO 웹캠 캡처 + 시간 정합(matching) + 디스크 저장
 
 [이 코드가 하는 일]
-  카메라 4대(/dev/video0,4,8,12)를 동시에 켜고, 일정 주기마다
+  카메라 4대(/dev/cam1~4)를 동시에 켜고, 일정 주기마다
   "가장 비슷한 시각에 찍힌 4장"을 한 묶음(set)으로 저장한다.
   동시에 그 4장이 실제로 얼마나 시간 차이가 나는지(sync gap)를
   측정해 sync_log.csv 에 기록한다. (시간 정합 + 검증)
 
-[설계 핵심 - 왜 이렇게 바꿨나]
+[카메라 지정 방식 - 물리 위치 기준]
+  /dev/cam1~4 는 udev 규칙이 카메라 시리얼로 만든 심볼릭 링크다.
+  따라서 USB 포트 순서나 재연결과 무관하게 항상 같은 물리 카메라
+  (cam1=좌하, cam2=좌상, cam3=우하, cam4=우상)에 매핑된다.
+  (예전에는 /dev/video0,4,8,12 처럼 '연결 순서'로 잡아서, 재부팅/재연결
+   때 물리 위치와 어긋날 수 있었다. 이제 위치가 고정된다.)
+
+[설계 핵심 - 왜 이렇게 나눴나]
   기존에는 카메라 4대가 "각자 자기 시계로" 따로 저장해서,
   같은 시간 녹화해도 저장 장수가 90/89 처럼 어긋났다.
   (감독 없이 4명이 각자 횟수를 셌기 때문)
@@ -27,10 +34,15 @@ recorder.py - 4채널 BRIO 웹캠 캡처 + 시간 정합(matching) + 디스크 �
   내용이 묵은 경우다. 이를 잡기 위해 각 프레임의 '나이(age, 집은 순간
   기준 몇 ms 전에 찍혔는지)'를 함께 기록하고, 임계값을 넘으면 경고 표시한다.
 
+[초점]
+  오토포커스를 끄고 카메라별 고정 초점을 config/camera_focus.yaml 에서
+  읽어 적용한다. 초점이 변하면 intrinsic(초점거리)도 변해 공간 정합
+  신뢰도가 떨어지므로, 캘리브레이션·촬영·녹화가 같은 고정 초점을 써야 한다.
+
 사용법:
-  python3 recorder.py              # 기본 2Hz
-  python3 recorder.py --hz 1       # 1Hz로 변경
-  python3 recorder.py --hz 0.5     # 2초당 1장
+  python3 quick_capture/recorder.py              # 기본 2Hz
+  python3 quick_capture/recorder.py --hz 1       # 1Hz로 변경
+  python3 quick_capture/recorder.py --hz 0.5     # 2초당 1장
 
 명령어 (실행 중):
   s : 캡처 시작 (새 세션 폴더 생성)
@@ -41,13 +53,21 @@ import cv2
 import os
 import csv
 import time
+import yaml
 import threading
 import argparse
 from datetime import datetime
 
 # ===== 설정 =====
-CAMERA_DEVICES = [0, 4, 8, 12]
-DATA_DIR = "/home/jay/pest_control_ws/quick_capture_data"
+# 물리 위치 기준 카메라 이름과 장치 경로(udev 심볼릭 링크).
+CAMERA_NAMES = ["cam1", "cam2", "cam3", "cam4"]
+DEVICE_PATHS = {name: f"/dev/{name}" for name in CAMERA_NAMES}
+
+# 저장 위치와 초점 설정 파일. '~'(현재 사용자 홈)로 풀어 어느 계정에서도 동작하게 한다.
+#   (예전에는 특정 사용자 경로 '/home/jay/...'가 하드코딩돼 다른 PC에서 저장이 안 됐다.)
+DATA_DIR = os.path.expanduser("~/pest_control_ws/quick_capture_data")
+FOCUS_CONFIG = os.path.expanduser("~/pest_control_ws/config/camera_focus.yaml")
+
 RESOLUTION = (1280, 720)
 JPEG_QUALITY = 85
 
@@ -59,16 +79,19 @@ TARGET_FPS = 60
 # camera_worker가 시작 직후 이 시간(초) 동안 들어온 프레임 수로 실효 fps를 1회 계산한다.
 FPS_MEASURE_WINDOW_S = 3.0
 
-# 오토포커스를 끄고 초점을 고정한다. 초점이 변하면 intrinsic(초점거리)도 변해
-# 공간 정합 신뢰도가 떨어지므로, 캘리브레이션과 촬영이 같은 고정 초점을 써야 한다.
-# FOCUS_ABSOLUTE: 0(원거리)~255(근거리), step 5. --focus로 변경하며 작업거리에서 튜닝한다.
+# 오토포커스 OFF 여부. 실제 초점값은 camera_focus.yaml 에서 카메라별로 읽는다.
 AUTOFOCUS_OFF = True
-FOCUS_ABSOLUTE = 0
 
 # 프레임 '나이'가 이 값을 넘으면 묵은 사진으로 보고 경고한다(초).
 # 60FPS에서 정상 프레임은 약 16.7ms 이내이므로, 0.1초(약 6프레임)를
 # 넘으면 해당 카메라가 잠깐 멈춘 것으로 간주한다.
 STALE_AGE_S = 0.1
+
+# 세트별 gap을 매번 출력하면 매처가 stdout을 계속 채워, 같은 터미널에서
+# input()으로 받는 s/t/q 명령이 파묻혀 입력이 어긋난다(두 글자로 합쳐지는 등).
+# 그래서 이 간격(세트 수)마다 한 번씩만 출력한다. STALE 경고는 항상 출력한다.
+# (모든 세트의 gap은 sync_log.csv에 빠짐없이 기록되므로 분석에는 영향 없다.)
+PRINT_EVERY_N_SETS = 20
 
 # ===== 전역 상태 =====
 recording = False
@@ -78,11 +101,11 @@ stop_event = threading.Event()
 # 녹화/세션/통계 등 제어 상태 보호용 락
 state_lock = threading.Lock()
 
-# 카메라별 "최신 프레임 칸". 값은 (mono_ts, wall_dt, frame) 또는 None.
+# 카메라별 "최신 프레임 칸". 키는 카메라 이름(cam1~4), 값은 (mono_ts, wall_dt, frame) 또는 None.
 #   mono_ts : time.monotonic() 기준 캡처 시각 (gap/age 계산용, 단조 증가)
 #   wall_dt : datetime.now()  기준 캡처 시각 (파일명·로그 표기용)
 #   frame   : 캡처된 이미지(numpy 배열)
-latest_frames = {idx: None for idx in CAMERA_DEVICES}
+latest_frames = {name: None for name in CAMERA_NAMES}
 frames_lock = threading.Lock()
 
 # 묶음(set) 공유 카운터 - 매처만 증가시킨다. 4대가 항상 같은 번호를 공유.
@@ -95,8 +118,34 @@ stale_set_count = 0   # 묵은 사진이 섞인 묶음 수
 save_interval = 0.5   # main에서 --hz 인자에 따라 갱신
 
 
-def open_camera(device_idx):
-    cap = cv2.VideoCapture(device_idx, cv2.CAP_V4L2)
+def load_focus_map(config_path, names):
+    """camera_focus.yaml 에서 카메라별 고정 초점값을 읽어 dict로 돌려준다.
+
+    파일이 없거나 특정 카메라 값이 없으면 그 카메라는 None(→ 오토포커스 OFF만
+    적용, 초점값은 카메라 기본)으로 둔다. 캘리브레이션 때와 같은 값을 써야
+    intrinsic 이 흔들리지 않으므로, 가능하면 모든 카메라 값이 채워져 있어야 한다.
+    """
+    try:
+        with open(config_path) as f:
+            cfg = yaml.safe_load(f) or {}
+    except FileNotFoundError:
+        print(f"[주의] 초점 설정 파일이 없습니다: {config_path} (오토포커스 OFF만 적용)")
+        cfg = {}
+    focus = {}
+    for name in names:
+        focus[name] = int(cfg[name]) if name in cfg else None
+        if focus[name] is None:
+            print(f"[주의] '{name}' 초점값이 설정에 없습니다. 기본 초점으로 진행합니다.")
+    return focus
+
+
+def open_camera(name, device_path, focus):
+    """카메라 한 대를 열고 해상도·코덱·fps·(고정)초점을 설정해 돌려준다.
+
+    실패 시 None 을 돌려준다. focus 가 None 이면 오토포커스만 끄고 초점값은
+    건드리지 않는다.
+    """
+    cap = cv2.VideoCapture(device_path, cv2.CAP_V4L2)
     if not cap.isOpened():
         return None
     cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
@@ -106,28 +155,29 @@ def open_camera(device_idx):
     # gap의 천장이 높아진다. 단, 요청일 뿐 보장은 아니므로 실효 fps를 따로 측정한다.
     cap.set(cv2.CAP_PROP_FPS, TARGET_FPS)
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-    # 오토포커스 OFF + 초점 고정 (intrinsic 안정화, 공간 정합 신뢰도 확보).
+    # 오토포커스 OFF + 카메라별 고정 초점 (intrinsic 안정화, 공간 정합 신뢰도 확보).
     # 설정 직후 실제 반영값을 읽어 출력해, 백엔드가 값을 무시하지 않았는지 검증한다.
     if AUTOFOCUS_OFF:
         cap.set(cv2.CAP_PROP_AUTOFOCUS, 0)
-        cap.set(cv2.CAP_PROP_FOCUS, FOCUS_ABSOLUTE)
-        print(f"[focus] video{device_idx} autofocus={cap.get(cv2.CAP_PROP_AUTOFOCUS)} "
-              f"focus={cap.get(cv2.CAP_PROP_FOCUS)} (요청 {FOCUS_ABSOLUTE})")
+        if focus is not None:
+            cap.set(cv2.CAP_PROP_FOCUS, focus)
+        print(f"[focus] {name}({device_path}) autofocus={cap.get(cv2.CAP_PROP_AUTOFOCUS)} "
+              f"focus={cap.get(cv2.CAP_PROP_FOCUS)} (요청 {focus})")
     return cap
 
 
-def camera_worker(device_idx):
+def camera_worker(name, device_path, focus):
     """카메라 워커(producer): 계속 찍어서 최신 프레임 칸만 갱신한다.
 
     여기서는 디스크 저장을 하지 않는다. 저장 여부/시점 판단은 전적으로
     매처(matcher_worker)가 담당한다. 이렇게 역할을 분리해야
     '4대가 항상 같은 묶음에 한 장씩'이 보장된다.
     """
-    cap = open_camera(device_idx)
+    cap = open_camera(name, device_path, focus)
     if cap is None:
-        print(f"[ERROR] /dev/video{device_idx} 열기 실패")
+        print(f"[ERROR] {device_path} 열기 실패")
         return
-    print(f"[OK] /dev/video{device_idx} 열림")
+    print(f"[OK] {name}({device_path}) 열림")
 
     # 실효 fps 측정용: 시작 직후 일정 시간 동안 들어온 프레임 수를 센다.
     # fps 설정값(요청)이 실제로 반영됐는지 '관문 1'을 확인하기 위함이다.
@@ -146,8 +196,7 @@ def camera_worker(device_idx):
             fps_count += 1
             elapsed = time.monotonic() - fps_t0
             if elapsed >= FPS_MEASURE_WINDOW_S:
-                print(f"[fps] cam{device_idx} ≈ {fps_count / elapsed:.1f} "
-                      f"(요청 {TARGET_FPS})")
+                print(f"[fps] {name} ≈ {fps_count / elapsed:.1f} (요청 {TARGET_FPS})")
                 fps_reported = True
 
         # 캡처 직후 두 종류의 시각을 함께 기록한다.
@@ -159,10 +208,10 @@ def camera_worker(device_idx):
         # 최신 프레임 칸을 덮어쓴다. cap.read()는 매번 새 배열을 반환하므로
         # 참조만 갱신하면 되고, 기존 묶음이 잡고 있는 프레임을 훼손하지 않는다.
         with frames_lock:
-            latest_frames[device_idx] = (mono_ts, wall_dt, frame)
+            latest_frames[name] = (mono_ts, wall_dt, frame)
 
     cap.release()
-    print(f"[CLOSED] /dev/video{device_idx}")
+    print(f"[CLOSED] {name}({device_path})")
 
 
 def matcher_worker():
@@ -197,33 +246,33 @@ def matcher_worker():
 
         # ----- 1) 4개 칸을 '동시에' 스냅샷 -----
         with frames_lock:
-            snapshot = {idx: latest_frames[idx] for idx in CAMERA_DEVICES}
+            snapshot = {name: latest_frames[name] for name in CAMERA_NAMES}
 
         # ----- 2) 시작 직후 빈 칸 방지: 4대 모두 첫 프레임이 올라왔을 때만 저장 -----
-        if any(snapshot[idx] is None for idx in CAMERA_DEVICES):
+        if any(snapshot[name] is None for name in CAMERA_NAMES):
             # 아직 준비 안 됨 - 다음 tick으로 미루지 않고 곧 재시도
             time.sleep(0.005)
             continue
 
         # ----- 3) sync gap 과 프레임 나이(age) 계산 -----
-        mono_list = [snapshot[idx][0] for idx in CAMERA_DEVICES]
+        mono_list = [snapshot[name][0] for name in CAMERA_NAMES]
         gap_ms = (max(mono_list) - min(mono_list)) * 1000.0
-        ages_ms = {idx: (now - snapshot[idx][0]) * 1000.0 for idx in CAMERA_DEVICES}
+        ages_ms = {name: (now - snapshot[name][0]) * 1000.0 for name in CAMERA_NAMES}
         is_stale = any(age > STALE_AGE_S * 1000.0 for age in ages_ms.values())
 
         # ----- 4) 같은 묶음 번호로 4장 저장 -----
         with state_lock:
             seq = set_count
             set_count += 1
-        for idx in CAMERA_DEVICES:
-            _mono, wall_dt, frame = snapshot[idx]
+        for name in CAMERA_NAMES:
+            _mono, wall_dt, frame = snapshot[name]
             ts = wall_dt.strftime("%Y%m%d_%H%M%S_") + f"{wall_dt.microsecond // 1000:03d}"
-            cam_dir = os.path.join(cur_session, f"cam{idx}")
-            filepath = os.path.join(cam_dir, f"set{seq:06d}_cam{idx}_{ts}.jpg")
+            cam_dir = os.path.join(cur_session, name)
+            filepath = os.path.join(cam_dir, f"set{seq:06d}_{name}_{ts}.jpg")
             try:
                 cv2.imwrite(filepath, frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
             except Exception as e:
-                print(f"[ERROR cam{idx}] 저장 실패: {e}")
+                print(f"[ERROR {name}] 저장 실패: {e}")
 
         # ----- 5) 검증 로그(sync_log.csv) 기록 -----
         if csv_path:
@@ -231,7 +280,7 @@ def matcher_worker():
                 with open(csv_path, "a", newline="") as f:
                     writer = csv.writer(f)
                     row = [seq, f"{gap_ms:.2f}"]
-                    row += [f"{ages_ms[idx]:.2f}" for idx in CAMERA_DEVICES]
+                    row += [f"{ages_ms[name]:.2f}" for name in CAMERA_NAMES]
                     row += [1 if is_stale else 0]
                     writer.writerow(row)
             except Exception as e:
@@ -244,8 +293,11 @@ def matcher_worker():
                 global stale_set_count
                 stale_set_count += 1
 
-        warn = "  [STALE!]" if is_stale else ""
-        print(f"[set {seq:06d}] gap={gap_ms:5.2f}ms{warn}")
+        # 터미널 명령(s/t/q)이 묻히지 않도록, 매 세트가 아니라 일정 간격으로만
+        # 출력한다. STALE은 놓치면 안 되므로 발생 시 항상 출력한다.
+        if is_stale or seq % PRINT_EVERY_N_SETS == 0:
+            warn = "  [STALE!]" if is_stale else ""
+            print(f"[set {seq:06d}] gap={gap_ms:5.2f}ms{warn}")
 
         next_tick += save_interval
         # 한참 밀렸으면(예: 디스크 지연) 스케줄을 현재 기준으로 재정렬
@@ -254,29 +306,30 @@ def matcher_worker():
 
 
 def main():
-    global recording, session_dir, save_interval, gap_samples, stale_set_count, FOCUS_ABSOLUTE
+    global recording, session_dir, save_interval, gap_samples, stale_set_count
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--hz", type=float, default=2.0,
                         help="캡처 주기 Hz (기본 2.0)")
-    parser.add_argument("--focus", type=int, default=FOCUS_ABSOLUTE,
-                        help="고정 초점값 0-255, step 5 (오토포커스 OFF, 작업거리에서 튜닝)")
+    parser.add_argument("--config", default=FOCUS_CONFIG,
+                        help="카메라별 초점 YAML 경로")
     args = parser.parse_args()
-
-    FOCUS_ABSOLUTE = args.focus
 
     if args.hz <= 0:
         print("[ERROR] --hz 값은 0보다 커야 합니다.")
         return
     save_interval = 1.0 / args.hz
 
+    # 카메라별 고정 초점값을 설정 파일에서 읽는다.
+    focus_map = load_focus_map(args.config, CAMERA_NAMES)
+
     print("=" * 50)
     print("Quick Capture - 4채널 시간 정합 캡처")
-    print(f"디바이스: {CAMERA_DEVICES}")
+    print(f"디바이스: {[DEVICE_PATHS[n] for n in CAMERA_NAMES]}")
     print(f"해상도: {RESOLUTION[0]}x{RESOLUTION[1]} MJPG")
     print(f"저장 주기: {args.hz} Hz  (간격 {save_interval:.2f}초)")
     print(f"묵은 사진 임계: {STALE_AGE_S * 1000:.0f}ms")
-    print(f"초점: 오토포커스 {'OFF, 고정 ' + str(FOCUS_ABSOLUTE) if AUTOFOCUS_OFF else 'ON'}")
+    print(f"초점(카메라별): {focus_map}")
     print(f"저장 위치: {DATA_DIR}")
     print("=" * 50)
     print("명령어: s=시작 / t=중지 / q=종료")
@@ -284,8 +337,11 @@ def main():
 
     # 카메라 워커 4개 + 매처 1개 시작
     threads = []
-    for idx in CAMERA_DEVICES:
-        t = threading.Thread(target=camera_worker, args=(idx,), daemon=True)
+    for name in CAMERA_NAMES:
+        t = threading.Thread(
+            target=camera_worker,
+            args=(name, DEVICE_PATHS[name], focus_map[name]),
+            daemon=True)
         t.start()
         threads.append(t)
 
@@ -307,14 +363,14 @@ def main():
                         continue
                     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                     new_session = os.path.join(DATA_DIR, f"session_{ts}")
-                    for idx in CAMERA_DEVICES:
-                        os.makedirs(os.path.join(new_session, f"cam{idx}"), exist_ok=True)
+                    for name in CAMERA_NAMES:
+                        os.makedirs(os.path.join(new_session, name), exist_ok=True)
                     # 검증 로그 헤더 생성
                     csv_path = os.path.join(new_session, "sync_log.csv")
                     with open(csv_path, "w", newline="") as f:
                         writer = csv.writer(f)
                         header = ["set", "gap_ms"]
-                        header += [f"cam{idx}_age_ms" for idx in CAMERA_DEVICES]
+                        header += [f"{name}_age_ms" for name in CAMERA_NAMES]
                         header += ["stale_warn"]
                         writer.writerow(header)
                     # 세션 통계 초기화
@@ -337,7 +393,7 @@ def main():
                     max_gap = max(gap_samples) if n else 0.0
                     stale_n = stale_set_count
                 print(f"[캡처 중지] {cur}")
-                print(f"  저장된 묶음 수: {n} (묶음당 {len(CAMERA_DEVICES)}장 = 총 {n * len(CAMERA_DEVICES)}장)")
+                print(f"  저장된 묶음 수: {n} (묶음당 {len(CAMERA_NAMES)}장 = 총 {n * len(CAMERA_NAMES)}장)")
                 print(f"  sync gap: 평균 {avg_gap:.2f}ms / 최대 {max_gap:.2f}ms")
                 print(f"  묵은 사진 섞인 묶음: {stale_n}개")
 
