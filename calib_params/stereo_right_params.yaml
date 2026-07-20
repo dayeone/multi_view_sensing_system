@@ -1,0 +1,130 @@
+pair: right
+reference_cam: cam3
+target_cam: cam4
+R:
+- - -0.9956352744749215
+  - 0.06692184868491416
+  - -0.06505279694095606
+- - 0.06499561699175693
+  - -0.0030336442154006438
+  - -0.9978809381758105
+- - -0.06697738419129734
+  - -0.9977536084481822
+  - -0.0013292236544446556
+T:
+- - 0.43500205213874743
+- - 409.8420375799901
+- - 420.9908568857903
+baseline_mm: 587.5406254685163
+rms_error: 0.5139354336761786
+rms_error_manual: 1.4349602852248398
+num_pairs: 26
+num_dropped: 1
+per_pair_rms:
+  pair_000.jpg: 0.5015
+  pair_001.jpg: 0.8718
+  pair_002.jpg: 1.1337
+  pair_003.jpg: 1.4008
+  pair_004.jpg: 1.7963
+  pair_006.jpg: 1.4516
+  pair_007.jpg: 1.4075
+  pair_008.jpg: 2.0084
+  pair_009.jpg: 0.9411
+  pair_010.jpg: 2.7005
+  pair_011.jpg: 1.0136
+  pair_012.jpg: 1.8946
+  pair_013.jpg: 2.5212
+  pair_014.jpg: 0.7971
+  pair_015.jpg: 0.8243
+  pair_016.jpg: 2.6039
+  pair_017.jpg: 1.2236
+  pair_018.jpg: 0.6001
+  pair_019.jpg: 1.3258
+  pair_020.jpg: 1.8278
+  pair_021.jpg: 0.5453
+  pair_022.jpg: 0.8136
+  pair_023.jpg: 1.071
+  pair_024.jpg: 0.801
+  pair_025.jpg: 0.867
+  pair_026.jpg: 0.6784
+per_view_solvepnp_err:
+  pair_000.jpg:
+    ref_px: 0.3337
+    tgt_px: 0.1765
+  pair_001.jpg:
+    ref_px: 0.3122
+    tgt_px: 0.1453
+  pair_002.jpg:
+    ref_px: 0.2327
+    tgt_px: 0.1273
+  pair_003.jpg:
+    ref_px: 0.1464
+    tgt_px: 0.1158
+  pair_004.jpg:
+    ref_px: 0.1268
+    tgt_px: 0.1327
+  pair_006.jpg:
+    ref_px: 0.2594
+    tgt_px: 0.1546
+  pair_007.jpg:
+    ref_px: 0.2516
+    tgt_px: 0.1348
+  pair_008.jpg:
+    ref_px: 0.2402
+    tgt_px: 0.1244
+  pair_009.jpg:
+    ref_px: 0.3494
+    tgt_px: 0.1597
+  pair_010.jpg:
+    ref_px: 0.3968
+    tgt_px: 0.1377
+  pair_011.jpg:
+    ref_px: 0.1727
+    tgt_px: 0.1485
+  pair_012.jpg:
+    ref_px: 0.2672
+    tgt_px: 0.1429
+  pair_013.jpg:
+    ref_px: 0.2029
+    tgt_px: 0.1594
+  pair_014.jpg:
+    ref_px: 0.2613
+    tgt_px: 0.1669
+  pair_015.jpg:
+    ref_px: 0.2964
+    tgt_px: 0.1914
+  pair_016.jpg:
+    ref_px: 0.31
+    tgt_px: 0.1958
+  pair_017.jpg:
+    ref_px: 0.2103
+    tgt_px: 0.3052
+  pair_018.jpg:
+    ref_px: 0.2853
+    tgt_px: 0.1433
+  pair_019.jpg:
+    ref_px: 0.2945
+    tgt_px: 0.1192
+  pair_020.jpg:
+    ref_px: 0.3625
+    tgt_px: 0.1027
+  pair_021.jpg:
+    ref_px: 0.2433
+    tgt_px: 0.1291
+  pair_022.jpg:
+    ref_px: 0.2129
+    tgt_px: 0.1346
+  pair_023.jpg:
+    ref_px: 0.2354
+    tgt_px: 0.1347
+  pair_024.jpg:
+    ref_px: 0.2115
+    tgt_px: 0.1288
+  pair_025.jpg:
+    ref_px: 0.1716
+    tgt_px: 0.1257
+  pair_026.jpg:
+    ref_px: 0.2531
+    tgt_px: 0.1011
+dropped_pairs:
+  pair_005.jpg: 공통 코너 6개 < 8

@@ -11,3 +11,4 @@ quick_capture/sample.jpg
 .venv/
 focus_scan/
 coverage_maps/
+stereo_data/

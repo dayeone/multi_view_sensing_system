@@ -1,0 +1,141 @@
+pair: left
+reference_cam: cam1
+target_cam: cam2
+R:
+- - -0.9984117229176729
+  - -0.028547948081547782
+  - 0.048570013391980534
+- - -0.04800646211569799
+  - -0.02010546550488479
+  - -0.998644656447911
+- - 0.029485778533014338
+  - -0.9993902065345475
+  - 0.018703046466736373
+T:
+- - -0.95076988350169
+- - 428.01586121007006
+- - 411.7332015188447
+baseline_mm: 593.9046309330538
+rms_error: 0.3723637998378187
+rms_error_manual: 1.1175051112157106
+num_pairs: 29
+num_dropped: 0
+per_pair_rms:
+  pair_000.jpg: 0.8106
+  pair_001.jpg: 0.363
+  pair_002.jpg: 2.242
+  pair_003.jpg: 0.8963
+  pair_004.jpg: 0.836
+  pair_005.jpg: 0.6633
+  pair_006.jpg: 0.7885
+  pair_007.jpg: 1.141
+  pair_008.jpg: 1.2829
+  pair_009.jpg: 0.7311
+  pair_010.jpg: 0.5929
+  pair_011.jpg: 0.3808
+  pair_012.jpg: 1.0353
+  pair_013.jpg: 0.6828
+  pair_014.jpg: 0.7255
+  pair_015.jpg: 0.6558
+  pair_016.jpg: 1.489
+  pair_017.jpg: 1.9358
+  pair_018.jpg: 1.5306
+  pair_019.jpg: 1.2258
+  pair_020.jpg: 1.0992
+  pair_021.jpg: 1.2397
+  pair_022.jpg: 0.5818
+  pair_023.jpg: 1.6704
+  pair_024.jpg: 0.9477
+  pair_025.jpg: 1.7568
+  pair_026.jpg: 0.8464
+  pair_027.jpg: 0.7808
+  pair_028.jpg: 1.0451
+per_view_solvepnp_err:
+  pair_000.jpg:
+    ref_px: 0.2648
+    tgt_px: 0.1613
+  pair_001.jpg:
+    ref_px: 0.2949
+    tgt_px: 0.1633
+  pair_002.jpg:
+    ref_px: 0.3915
+    tgt_px: 0.2039
+  pair_003.jpg:
+    ref_px: 0.2834
+    tgt_px: 0.1586
+  pair_004.jpg:
+    ref_px: 0.3534
+    tgt_px: 0.1608
+  pair_005.jpg:
+    ref_px: 0.3345
+    tgt_px: 0.1393
+  pair_006.jpg:
+    ref_px: 0.2863
+    tgt_px: 0.1976
+  pair_007.jpg:
+    ref_px: 0.2435
+    tgt_px: 0.1711
+  pair_008.jpg:
+    ref_px: 0.2472
+    tgt_px: 0.1431
+  pair_009.jpg:
+    ref_px: 0.2128
+    tgt_px: 0.1996
+  pair_010.jpg:
+    ref_px: 0.2067
+    tgt_px: 0.1937
+  pair_011.jpg:
+    ref_px: 0.3174
+    tgt_px: 0.1718
+  pair_012.jpg:
+    ref_px: 0.2035
+    tgt_px: 0.1688
+  pair_013.jpg:
+    ref_px: 0.2504
+    tgt_px: 0.1083
+  pair_014.jpg:
+    ref_px: 0.2103
+    tgt_px: 0.1398
+  pair_015.jpg:
+    ref_px: 0.2473
+    tgt_px: 0.1309
+  pair_016.jpg:
+    ref_px: 0.2155
+    tgt_px: 0.1751
+  pair_017.jpg:
+    ref_px: 0.1936
+    tgt_px: 0.1479
+  pair_018.jpg:
+    ref_px: 0.2792
+    tgt_px: 0.1136
+  pair_019.jpg:
+    ref_px: 0.2221
+    tgt_px: 0.1256
+  pair_020.jpg:
+    ref_px: 0.2348
+    tgt_px: 0.124
+  pair_021.jpg:
+    ref_px: 0.203
+    tgt_px: 0.106
+  pair_022.jpg:
+    ref_px: 0.1575
+    tgt_px: 0.0949
+  pair_023.jpg:
+    ref_px: 0.095
+    tgt_px: 0.0726
+  pair_024.jpg:
+    ref_px: 0.2506
+    tgt_px: 0.1545
+  pair_025.jpg:
+    ref_px: 0.3298
+    tgt_px: 0.1492
+  pair_026.jpg:
+    ref_px: 0.197
+    tgt_px: 0.0997
+  pair_027.jpg:
+    ref_px: 0.1577
+    tgt_px: 0.1075
+  pair_028.jpg:
+    ref_px: 0.1374
+    tgt_px: 0.1125
+dropped_pairs: {}
