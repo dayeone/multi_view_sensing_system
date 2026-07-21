@@ -54,6 +54,7 @@ import os
 import csv
 import time
 import yaml
+import collections
 import threading
 import argparse
 from datetime import datetime
@@ -101,12 +102,19 @@ stop_event = threading.Event()
 # 녹화/세션/통계 등 제어 상태 보호용 락
 state_lock = threading.Lock()
 
-# 카메라별 "최신 프레임 칸". 키는 카메라 이름(cam1~4), 값은 (mono_ts, wall_dt, frame) 또는 None.
+# 카메라별 "최근 프레임 버퍼". 키는 카메라 이름(cam1~4), 각 원소는 (mono_ts, wall_dt, frame).
 #   mono_ts : time.monotonic() 기준 캡처 시각 (gap/age 계산용, 단조 증가)
 #   wall_dt : datetime.now()  기준 캡처 시각 (파일명·로그 표기용)
 #   frame   : 캡처된 이미지(numpy 배열)
-latest_frames = {name: None for name in CAMERA_NAMES}
+# 'latest' 모드는 버퍼 맨 끝(최신) 1장만 쓰고, 'nearest' 모드는 버퍼 전체에서
+# 촬영시각이 가장 가까운 4장 조합을 골라 gap을 줄인다.
+#   BUFFER_SIZE: 정합에 쓸 과거 프레임 수. 메모리 ≈ 720p BGR 2.6MB × 4대 × 이 값.
+BUFFER_SIZE = 8
+frame_buffers = {name: collections.deque(maxlen=BUFFER_SIZE) for name in CAMERA_NAMES}
 frames_lock = threading.Lock()
+
+# 정합 방식: 'latest'(baseline) 또는 'nearest'(최근접 타임스탬프 매칭). main에서 설정.
+MATCH_MODE = "latest"
 
 # 묶음(set) 공유 카운터 - 매처만 증가시킨다. 4대가 항상 같은 번호를 공유.
 set_count = 0
@@ -208,15 +216,48 @@ def camera_worker(name, device_path, focus):
         # 최신 프레임 칸을 덮어쓴다. cap.read()는 매번 새 배열을 반환하므로
         # 참조만 갱신하면 되고, 기존 묶음이 잡고 있는 프레임을 훼손하지 않는다.
         with frames_lock:
-            latest_frames[name] = (mono_ts, wall_dt, frame)
+            frame_buffers[name].append((mono_ts, wall_dt, frame))
 
     cap.release()
     print(f"[CLOSED] {name}({device_path})")
 
 
+def select_nearest(buffers):
+    """각 카메라 버퍼에서 한 장씩 골라, 고른 4장의 '촬영시각 스프레드'
+    (가장 늦게 찍힌 시각 - 가장 먼저 찍힌 시각)가 최소가 되는 조합을 찾는다.
+
+    baseline('최신 1장')은 카메라들의 위상차 때문에 최대 한 프레임 주기만큼
+    벌어질 수 있다. 여기서는 버퍼에 쌓인 최근 프레임들 중 서로 촬영시각이
+    가장 가까운 조합을 골라 그 벌어짐(gap)을 줄인다. (소프트웨어 시간 동기화)
+
+    방식: 모든 카메라의 모든 프레임 시각을 '기준시각 후보'로 두고, 각 후보마다
+    카메라별로 그 시각에 가장 가까운 프레임을 뽑아 스프레드를 잰 뒤, 스프레드가
+    가장 작은 조합을 고른다. (버퍼가 작아 계산량은 미미하다.)
+
+    반환: (chosen, gap_ms)
+      chosen : {카메라이름: (mono_ts, wall_dt, frame)}
+      gap_ms : 고른 4장의 촬영시각 스프레드(ms)
+    """
+    names = list(buffers.keys())
+    candidate_times = sorted({e[0] for name in names for e in buffers[name]})
+    best_chosen = None
+    best_spread = None
+    for T in candidate_times:
+        chosen = {}
+        for name in names:
+            # 이 카메라 버퍼에서 기준시각 T에 촬영시각이 가장 가까운 프레임
+            chosen[name] = min(buffers[name], key=lambda e: abs(e[0] - T))
+        ts = [chosen[name][0] for name in names]
+        spread = max(ts) - min(ts)
+        if best_spread is None or spread < best_spread:
+            best_spread = spread
+            best_chosen = chosen
+    return best_chosen, best_spread * 1000.0
+
+
 def matcher_worker():
     """매처(consumer): 녹화 중일 때 save_interval 주기로 한 번씩,
-    4개 칸을 동시에 집어 한 묶음으로 저장하고 sync gap을 측정·기록한다.
+    버퍼에서 4장을 골라(정합) 한 묶음으로 저장하고 sync gap을 측정·기록한다.
     """
     global set_count
 
@@ -244,19 +285,26 @@ def matcher_worker():
             time.sleep(0.002)
             continue
 
-        # ----- 1) 4개 칸을 '동시에' 스냅샷 -----
+        # ----- 1) 버퍼 스냅샷 (락 점유를 줄이려 리스트로 복사) -----
         with frames_lock:
-            snapshot = {name: latest_frames[name] for name in CAMERA_NAMES}
+            buffers = {name: list(frame_buffers[name]) for name in CAMERA_NAMES}
 
-        # ----- 2) 시작 직후 빈 칸 방지: 4대 모두 첫 프레임이 올라왔을 때만 저장 -----
-        if any(snapshot[name] is None for name in CAMERA_NAMES):
-            # 아직 준비 안 됨 - 다음 tick으로 미루지 않고 곧 재시도
+        # ----- 2) 시작 직후 빈 버퍼 방지: 4대 모두 프레임이 올라왔을 때만 저장 -----
+        if any(len(buffers[name]) == 0 for name in CAMERA_NAMES):
             time.sleep(0.005)
             continue
 
-        # ----- 3) sync gap 과 프레임 나이(age) 계산 -----
-        mono_list = [snapshot[name][0] for name in CAMERA_NAMES]
-        gap_ms = (max(mono_list) - min(mono_list)) * 1000.0
+        # ----- 3) 정합: 방식에 따라 저장할 4장을 고른다 -----
+        if MATCH_MODE == "nearest":
+            # 버퍼 전체에서 촬영시각이 가장 가까운 4장 조합 선택
+            snapshot, gap_ms = select_nearest(buffers)
+        else:
+            # baseline: 각 카메라의 최신(맨 끝) 1장
+            snapshot = {name: buffers[name][-1] for name in CAMERA_NAMES}
+            mono_list = [snapshot[name][0] for name in CAMERA_NAMES]
+            gap_ms = (max(mono_list) - min(mono_list)) * 1000.0
+
+        # 프레임 나이(age)와 stale 판정 (실제 고른 프레임 기준)
         ages_ms = {name: (now - snapshot[name][0]) * 1000.0 for name in CAMERA_NAMES}
         is_stale = any(age > STALE_AGE_S * 1000.0 for age in ages_ms.values())
 
@@ -306,14 +354,19 @@ def matcher_worker():
 
 
 def main():
-    global recording, session_dir, save_interval, gap_samples, stale_set_count
+    global recording, session_dir, save_interval, gap_samples, stale_set_count, MATCH_MODE
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--hz", type=float, default=2.0,
                         help="캡처 주기 Hz (기본 2.0)")
     parser.add_argument("--config", default=FOCUS_CONFIG,
                         help="카메라별 초점 YAML 경로")
+    parser.add_argument("--match", choices=["latest", "nearest"], default="latest",
+                        help="정합 방식: latest(baseline, 최신1장) / "
+                             "nearest(최근접 타임스탬프 매칭)")
     args = parser.parse_args()
+
+    MATCH_MODE = args.match
 
     if args.hz <= 0:
         print("[ERROR] --hz 값은 0보다 커야 합니다.")
@@ -328,6 +381,7 @@ def main():
     print(f"디바이스: {[DEVICE_PATHS[n] for n in CAMERA_NAMES]}")
     print(f"해상도: {RESOLUTION[0]}x{RESOLUTION[1]} MJPG")
     print(f"저장 주기: {args.hz} Hz  (간격 {save_interval:.2f}초)")
+    print(f"정합 방식: {MATCH_MODE}  (latest=최신1장 / nearest=최근접 매칭, 버퍼 {BUFFER_SIZE}장)")
     print(f"묵은 사진 임계: {STALE_AGE_S * 1000:.0f}ms")
     print(f"초점(카메라별): {focus_map}")
     print(f"저장 위치: {DATA_DIR}")
