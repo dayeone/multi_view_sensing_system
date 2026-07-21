@@ -116,6 +116,11 @@ frames_lock = threading.Lock()
 # 정합 방식: 'latest'(baseline) 또는 'nearest'(최근접 타임스탬프 매칭). main에서 설정.
 MATCH_MODE = "latest"
 
+# nearest 모드에서 정합에 쓸 '최근 구간'(초). 이 구간 안의 프레임만 후보로 삼아
+# 과거로 너무 멀리 가지 않게 해 age(지연)를 제한한다. main에서 --lookback로 설정.
+#   작을수록 age↓(신선) / 정렬 선택지↓(gap 살짝↑), 클수록 그 반대. (age-gap 트레이드오프 손잡이)
+LOOKBACK_S = 0.066  # 기본 66ms ≈ 30fps의 2프레임
+
 # 묶음(set) 공유 카운터 - 매처만 증가시킨다. 4대가 항상 같은 번호를 공유.
 set_count = 0
 
@@ -222,7 +227,7 @@ def camera_worker(name, device_path, focus):
     print(f"[CLOSED] {name}({device_path})")
 
 
-def select_nearest(buffers):
+def select_nearest(buffers, lookback_s):
     """각 카메라 버퍼에서 한 장씩 골라, 고른 4장의 '촬영시각 스프레드'
     (가장 늦게 찍힌 시각 - 가장 먼저 찍힌 시각)가 최소가 되는 조합을 찾는다.
 
@@ -230,23 +235,36 @@ def select_nearest(buffers):
     벌어질 수 있다. 여기서는 버퍼에 쌓인 최근 프레임들 중 서로 촬영시각이
     가장 가까운 조합을 골라 그 벌어짐(gap)을 줄인다. (소프트웨어 시간 동기화)
 
-    방식: 모든 카메라의 모든 프레임 시각을 '기준시각 후보'로 두고, 각 후보마다
-    카메라별로 그 시각에 가장 가까운 프레임을 뽑아 스프레드를 잰 뒤, 스프레드가
-    가장 작은 조합을 고른다. (버퍼가 작아 계산량은 미미하다.)
+    [v2 - 최근 구간 제한(방식 A)]
+      과거로 너무 멀리 거슬러 가면 gap은 줄어도 고른 프레임이 오래돼(age↑) 버린다.
+      그래서 '가장 최신 프레임 시각(t_newest)'을 기준으로 최근 lookback_s 안의
+      프레임만 후보로 삼는다. 이렇게 하면 age가 대략 lookback_s 이내로 묶인다.
+      (단, 어떤 카메라가 그 구간에 프레임이 없으면 그 카메라의 최신 1장은 예외로 포함.)
 
     반환: (chosen, gap_ms)
       chosen : {카메라이름: (mono_ts, wall_dt, frame)}
       gap_ms : 고른 4장의 촬영시각 스프레드(ms)
     """
     names = list(buffers.keys())
-    candidate_times = sorted({e[0] for name in names for e in buffers[name]})
+
+    # 1) 최근 구간 후보만 남긴다: 가장 최신 프레임 시각에서 lookback_s 이내.
+    t_newest = max(buffers[name][-1][0] for name in names)
+    t_min = t_newest - lookback_s
+    windowed = {}
+    for name in names:
+        recent = [e for e in buffers[name] if e[0] >= t_min]
+        # 구간 안에 하나도 없으면(그 카메라가 크게 밀린 경우) 최신 1장은 넣어준다.
+        windowed[name] = recent if recent else [buffers[name][-1]]
+
+    # 2) 남은 후보들 중 스프레드 최소 조합 탐색.
+    candidate_times = sorted({e[0] for name in names for e in windowed[name]})
     best_chosen = None
     best_spread = None
     for T in candidate_times:
         chosen = {}
         for name in names:
-            # 이 카메라 버퍼에서 기준시각 T에 촬영시각이 가장 가까운 프레임
-            chosen[name] = min(buffers[name], key=lambda e: abs(e[0] - T))
+            # 이 카메라의 (구간 내) 프레임 중 기준시각 T에 가장 가까운 것
+            chosen[name] = min(windowed[name], key=lambda e: abs(e[0] - T))
         ts = [chosen[name][0] for name in names]
         spread = max(ts) - min(ts)
         if best_spread is None or spread < best_spread:
@@ -296,8 +314,8 @@ def matcher_worker():
 
         # ----- 3) 정합: 방식에 따라 저장할 4장을 고른다 -----
         if MATCH_MODE == "nearest":
-            # 버퍼 전체에서 촬영시각이 가장 가까운 4장 조합 선택
-            snapshot, gap_ms = select_nearest(buffers)
+            # 최근 구간(LOOKBACK_S) 안에서 촬영시각이 가장 가까운 4장 조합 선택
+            snapshot, gap_ms = select_nearest(buffers, LOOKBACK_S)
         else:
             # baseline: 각 카메라의 최신(맨 끝) 1장
             snapshot = {name: buffers[name][-1] for name in CAMERA_NAMES}
@@ -354,7 +372,8 @@ def matcher_worker():
 
 
 def main():
-    global recording, session_dir, save_interval, gap_samples, stale_set_count, MATCH_MODE
+    global recording, session_dir, save_interval, gap_samples, stale_set_count
+    global MATCH_MODE, LOOKBACK_S
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--hz", type=float, default=2.0,
@@ -364,9 +383,13 @@ def main():
     parser.add_argument("--match", choices=["latest", "nearest"], default="latest",
                         help="정합 방식: latest(baseline, 최신1장) / "
                              "nearest(최근접 타임스탬프 매칭)")
+    parser.add_argument("--lookback", type=int, default=66,
+                        help="nearest 모드 탐색 최근 구간(ms). 작을수록 age↓/gap↑, "
+                             "클수록 반대 (기본 66)")
     args = parser.parse_args()
 
     MATCH_MODE = args.match
+    LOOKBACK_S = args.lookback / 1000.0
 
     if args.hz <= 0:
         print("[ERROR] --hz 값은 0보다 커야 합니다.")
@@ -382,6 +405,8 @@ def main():
     print(f"해상도: {RESOLUTION[0]}x{RESOLUTION[1]} MJPG")
     print(f"저장 주기: {args.hz} Hz  (간격 {save_interval:.2f}초)")
     print(f"정합 방식: {MATCH_MODE}  (latest=최신1장 / nearest=최근접 매칭, 버퍼 {BUFFER_SIZE}장)")
+    if MATCH_MODE == "nearest":
+        print(f"  탐색 최근 구간(lookback): {args.lookback}ms")
     print(f"묵은 사진 임계: {STALE_AGE_S * 1000:.0f}ms")
     print(f"초점(카메라별): {focus_map}")
     print(f"저장 위치: {DATA_DIR}")
