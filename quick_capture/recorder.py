@@ -312,17 +312,23 @@ def matcher_worker():
             time.sleep(0.005)
             continue
 
-        # ----- 3) 정합: 방식에 따라 저장할 4장을 고른다 -----
-        if MATCH_MODE == "nearest":
-            # 최근 구간(LOOKBACK_S) 안에서 촬영시각이 가장 가까운 4장 조합 선택
-            snapshot, gap_ms = select_nearest(buffers, LOOKBACK_S)
-        else:
-            # baseline: 각 카메라의 최신(맨 끝) 1장
-            snapshot = {name: buffers[name][-1] for name in CAMERA_NAMES}
-            mono_list = [snapshot[name][0] for name in CAMERA_NAMES]
-            gap_ms = (max(mono_list) - min(mono_list)) * 1000.0
+        # ----- 3) 정합: 두 방식(latest/nearest)을 '같은 버퍼'로 모두 계산 -----
+        #   통제된 비교를 위해 매 tick마다 두 gap을 함께 구한다. 카메라는 한 번만
+        #   캡처하고, 두 방법은 그 동일한 프레임들에 대한 계산일 뿐이라 장치 충돌이
+        #   없고, 두 gap의 차이가 순수하게 알고리즘 차이가 된다.
+        #   (계산량은 숫자 몇 개 수준이라 성능·gap 측정에 영향 없음.)
+        latest_pick = {name: buffers[name][-1] for name in CAMERA_NAMES}   # 최신 1장
+        lt = [latest_pick[name][0] for name in CAMERA_NAMES]
+        gap_latest = (max(lt) - min(lt)) * 1000.0
+        nearest_pick, gap_nearest = select_nearest(buffers, LOOKBACK_S)    # 최근접 매칭
 
-        # 프레임 나이(age)와 stale 판정 (실제 고른 프레임 기준)
+        # 실제 디스크에 저장할 4장은 MATCH_MODE가 정한 방식으로 고른다.
+        if MATCH_MODE == "nearest":
+            snapshot, gap_ms = nearest_pick, gap_nearest
+        else:
+            snapshot, gap_ms = latest_pick, gap_latest
+
+        # 프레임 나이(age)와 stale 판정 (실제 저장하는 프레임 기준)
         ages_ms = {name: (now - snapshot[name][0]) * 1000.0 for name in CAMERA_NAMES}
         is_stale = any(age > STALE_AGE_S * 1000.0 for age in ages_ms.values())
 
@@ -345,9 +351,10 @@ def matcher_worker():
             try:
                 with open(csv_path, "a", newline="") as f:
                     writer = csv.writer(f)
-                    row = [seq, f"{gap_ms:.2f}"]
+                    # gap_saved = 실제 저장한 방식의 gap, 그 뒤에 두 방식 gap을 함께 기록
+                    row = [seq, f"{gap_ms:.2f}", f"{gap_latest:.2f}", f"{gap_nearest:.2f}"]
                     row += [f"{ages_ms[name]:.2f}" for name in CAMERA_NAMES]
-                    row += [1 if is_stale else 0]
+                    row += [MATCH_MODE, 1 if is_stale else 0]
                     writer.writerow(row)
             except Exception as e:
                 print(f"[ERROR] sync_log 기록 실패: {e}")
@@ -448,9 +455,9 @@ def main():
                     csv_path = os.path.join(new_session, "sync_log.csv")
                     with open(csv_path, "w", newline="") as f:
                         writer = csv.writer(f)
-                        header = ["set", "gap_ms"]
+                        header = ["set", "gap_saved_ms", "gap_latest_ms", "gap_nearest_ms"]
                         header += [f"{name}_age_ms" for name in CAMERA_NAMES]
-                        header += ["stale_warn"]
+                        header += ["match_mode", "stale_warn"]
                         writer.writerow(header)
                     # 세션 통계 초기화
                     gap_samples = []
