@@ -50,6 +50,37 @@ def cam_label(img_path: Path, input_root: Path) -> str:
     return "unknown"
 
 
+def make_summary_png(csv_path: Path, out_png: Path) -> bool:
+    """verdicts.csv → 카메라별 정상/이상 막대 + 이상 conf 히스토그램 PNG."""
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except Exception:
+        return False
+    rows = list(csv.DictReader(open(csv_path)))
+    if not rows:
+        return False
+    cams = sorted({r["cam"] for r in rows})
+    norm = [sum(1 for r in rows if r["cam"] == c and r["verdict"] == "normal") for c in cams]
+    abn = [sum(1 for r in rows if r["cam"] == c and r["verdict"] == "abnormal") for c in cams]
+    confs = [float(r["max_conf"]) for r in rows if r["verdict"] == "abnormal"]
+    fig, ax = plt.subplots(1, 2, figsize=(11, 4))
+    ax[0].bar(cams, norm, label="normal", color="#4c78a8")
+    ax[0].bar(cams, abn, bottom=norm, label="abnormal", color="#e45756")
+    ax[0].set_title("normal vs abnormal per camera")
+    ax[0].set_ylabel("images")
+    ax[0].legend()
+    ax[1].hist(confs, bins=15, range=(0, 1), color="#e45756")
+    ax[1].set_title("abnormal max_conf distribution")
+    ax[1].set_xlabel("confidence")
+    ax[1].set_ylabel("count")
+    fig.tight_layout()
+    fig.savefig(str(out_png), dpi=110)
+    plt.close(fig)
+    return True
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="딸기 병해 유무 판정(구조 B 추론)")
     src = parser.add_mutually_exclusive_group(required=True)
@@ -121,7 +152,7 @@ def main() -> int:
                 abnormal += 1
             writer.writerow([img_path.name, cam, verdict, n, f"{max_conf:.3f}"])
 
-            cam_out = out_dir / cam
+            cam_out = out_dir / verdict / cam
             cam_out.mkdir(parents=True, exist_ok=True)
             res.save(filename=str(cam_out / img_path.name))
 
@@ -137,10 +168,12 @@ def main() -> int:
         f"정상        : {normal} ({100 * normal / len(images):.1f}%)",
         "=" * 56,
         f"판정 CSV    : {csv_path}",
-        f"주석 이미지 : {out_dir}",
+        f"주석 이미지 : {out_dir} (abnormal/ · normal/ 로 구분)",
     ])
     print("\n" + text)
     (out_dir / "summary.txt").write_text(text + "\n")
+    if make_summary_png(csv_path, out_dir / "summary.png"):
+        print(f"요약 그래프 : {out_dir / 'summary.png'}")
     return 0
 
 
