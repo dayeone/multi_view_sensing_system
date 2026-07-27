@@ -102,7 +102,8 @@ def main() -> int:
             conf=args.conf, imgsz=args.imgsz, device=args.device,
             stream=True, verbose=False,
         )
-        for img_path, res in zip(images, results):
+        n_total = len(images)
+        for i, (img_path, res) in enumerate(zip(images, results), 1):
             cam = cam_label(img_path, input_root)
             boxes = res.boxes
             n = 0 if boxes is None else len(boxes)
@@ -115,6 +116,10 @@ def main() -> int:
             cam_out = out_dir / cam
             cam_out.mkdir(parents=True, exist_ok=True)
             res.save(filename=str(cam_out / img_path.name))
+
+            if i % 20 == 0 or i == n_total:
+                print(f"\r진행 {i}/{n_total}  (이상 {abnormal})", end="", flush=True)
+        print()  # 진행 표시 줄바꿈
 
     normal = len(images) - abnormal
     text = "\n".join([
