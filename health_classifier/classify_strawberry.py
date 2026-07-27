@@ -26,6 +26,7 @@ import csv
 import sys
 from pathlib import Path
 
+import cv2
 from ultralytics import YOLO
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -61,7 +62,11 @@ def main() -> int:
     parser.add_argument("--device", type=str, default=None, help="cuda / cpu (기본: 자동)")
     parser.add_argument("--imgsz", type=int, default=640, help="추론 입력 크기")
     parser.add_argument("--out", type=str, default=None, help="출력 폴더")
+    parser.add_argument("--rotate180", type=str, default="cam8,cam12",
+                        help="180도 회전할 카메라 라벨(콤마구분, 장착 방향 보정). 기본 cam8,cam12")
     args = parser.parse_args()
+
+    rotate_set = {c.strip() for c in args.rotate180.split(",") if c.strip()}
 
     input_root = Path(args.session or args.input).resolve()
     if not input_root.exists():
@@ -86,6 +91,7 @@ def main() -> int:
     print(f"입력     : {input_root}  ({len(images)}장)")
     print(f"출력     : {out_dir}")
     print(f"conf임계 : {args.conf}  imgsz: {args.imgsz}  device: {args.device or 'auto'}")
+    print(f"180도회전: {sorted(rotate_set) or '없음'}")
     print("=" * 56)
 
     model = YOLO(str(weights))
@@ -96,15 +102,17 @@ def main() -> int:
         writer = csv.writer(f)
         writer.writerow(["image", "cam", "verdict", "n_disease", "max_conf"])
 
-        # stream=True 로 1장씩 처리(대량 세션 대응)
-        results = model.predict(
-            source=[str(p) for p in images],
-            conf=args.conf, imgsz=args.imgsz, device=args.device,
-            stream=True, verbose=False,
-        )
+        # 카메라별 방향 정규화(cam8/12 180도) 후 1장씩 추론
         n_total = len(images)
-        for i, (img_path, res) in enumerate(zip(images, results), 1):
+        for i, img_path in enumerate(images, 1):
             cam = cam_label(img_path, input_root)
+            im = cv2.imread(str(img_path))
+            if im is None:
+                continue
+            if cam in rotate_set:
+                im = cv2.rotate(im, cv2.ROTATE_180)  # 장착 방향 보정
+            res = model.predict(im, conf=args.conf, imgsz=args.imgsz,
+                                device=args.device, verbose=False)[0]
             boxes = res.boxes
             n = 0 if boxes is None else len(boxes)
             verdict = "abnormal" if n > 0 else "normal"
