@@ -1,15 +1,40 @@
+# ── 빌드 산출물 ────────────────────────────────
 build/
 install/
 log/
 __pycache__/
-.vscode/
 *.egg-info/
-calib_data/
 
-# 가상환경
+# ── 편집기 · 환경 ──────────────────────────────
+.vscode/
 .venv/
+.agents/
+.codex/
 
-# quick_capture 산출물 (소스 .py는 추적 유지)
+# ── 비밀 ──────────────────────────────────────
+.env
+*.key
+*.pem
+
+# ── 취득 데이터 (용량 큼, 저장소 밖에서 관리) ──
+calib_data/
 quick_capture_data/
+stereo_data/
+focus_scan/
+captured_images/
+
+# ── 산출물 (재생성 가능) ───────────────────────
 quick_capture/models/
+quick_capture/sample.jpg
 quick_capture/detect_out_session_*/
+health_classifier/datasets/
+health_classifier/runs/
+health_classifier/classify_out_*/
+health_classifier/*.pt
+
+# ── 개인 자료 (저장소에 두지 않음) ─────────────
+patent_docs/
+ppt_assets/
+velog/
+
+# 주의: coverage_maps/ 와 results/ 는 시스템 실측 자료이므로 추적한다.

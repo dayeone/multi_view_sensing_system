@@ -16,8 +16,8 @@ class SingleCalibCollector(Node):
     def __init__(self):
         super().__init__('single_calib_collector')
         
-        # 체커보드 내부 코너 개수 설정 (가로 7, 세로 10)
-        self.checkerboard = (7, 10) 
+        # 체커보드 내부 코너 개수 설정 (가로 7, 세로 9)
+        self.checkerboard = (7, 9)
         self.prev_time = 0 
 
         # FPS 계산을 위한 이동 평균용 변수
@@ -25,8 +25,8 @@ class SingleCalibCollector(Node):
         self.window_size = 30 
         
         # ROS 2 파라미터 선언
-        # cam0의 깜빡임 문제를 해결하기 위해 기본 장치를 /dev/video0로 변경
-        self.declare_parameter('device_path', '/dev/video0')
+        # 기본 장치는 udev 시리얼 고정 심볼릭 링크 사용 (ATTR{index}=="0" 조건으로 메타데이터 노드 오검출 방지됨)
+        self.declare_parameter('device_path', '/dev/cam1')
         self.declare_parameter('use_gpu', False)
         # 기본 실행 모드를 remote로 설정하여 별도 옵션 없이도 원격 송출되도록 함
         self.declare_parameter('display_mode', 'remote')
@@ -46,7 +46,7 @@ class SingleCalibCollector(Node):
         self.save_path = os.path.expanduser(f'~/pest_control_ws/calib_data/{folder_name}')
         os.makedirs(self.save_path, exist_ok=True)
 
-        # 실제 장치 경로 확인 (/dev/cam0 -> /dev/videoX)
+        # 실제 장치 경로 확인 (/dev/cam1 -> /dev/videoX)
         real_device_path = os.path.realpath(self.device_path)
 
         # 카메라 캡처 객체 생성
@@ -68,6 +68,10 @@ class SingleCalibCollector(Node):
                 self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
                 self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
                 self.cap.set(cv2.CAP_PROP_FPS, 60)
+                # 오토포커스 OFF + 초점 고정 (intrinsic 안정화, 공간 정합용).
+                # 초점값은 recorder.py의 --focus 값과 반드시 동일하게 유지할 것.
+                self.cap.set(cv2.CAP_PROP_AUTOFOCUS, 0)
+                self.cap.set(cv2.CAP_PROP_FOCUS, 0)
         
         if not self.cap.isOpened():
             self.get_logger().error(f'Failed to open camera: {self.device_path}')
