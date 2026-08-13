@@ -11,7 +11,8 @@
 
 ```
 quick_capture/
-├── recorder.py              # 4채널 캡처 + 토글 + 저장
+├── field_capture/           # 실증 환경 실시간 촬영 코드 모음
+│   └── recorder.py          # [플랜 C] 시간 주기(2Hz) 트리거 캡처 + 시간 정합 + 저장
 ├── uploader.py              # 명시한 세션만 서버 업로드
 ├── hks_agrix_ext_client.py  # HKS Agrix API 클라이언트 (업체 제공, 재사용)
 ├── .env                     # 인증키 (git 제외)
@@ -36,18 +37,18 @@ quick_capture/
 
 ## 사용법
 
-### 1. 카메라 캡처 (recorder.py)
+### 1. 카메라 캡처 (field_capture/recorder.py)
 
 기본 실행 (2 Hz):
 ```bash
 cd ~/pest_control_ws
-python3 quick_capture/recorder.py
+python3 quick_capture/field_capture/recorder.py
 ```
 
 캡처 주기 변경:
 ```bash
-python3 recorder.py --hz 1      # 1 Hz
-python3 recorder.py --hz 0.5    # 2초당 1장
+python3 quick_capture/field_capture/recorder.py --hz 1      # 1 Hz
+python3 quick_capture/field_capture/recorder.py --hz 0.5    # 2초당 1장
 ```
 
 실행 중 명령어:

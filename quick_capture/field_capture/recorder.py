@@ -39,10 +39,15 @@ recorder.py - 4채널 BRIO 웹캠 캡처 + 시간 정합(matching) + 디스크 �
   읽어 적용한다. 초점이 변하면 intrinsic(초점거리)도 변해 공간 정합
   신뢰도가 떨어지므로, 캘리브레이션·촬영·녹화가 같은 고정 초점을 써야 한다.
 
+[취득 방식 구분 - 플랜 C]
+  이 파일은 '시간 주기' 트리거 방식이다. 로봇 속도와 무관하게 일정 시간마다
+  찍으므로, 로봇이 느려지면 같은 자리를 중복 촬영하고 빨라지면 구간을 건너뛴다.
+  거리 기반(플랜 A)·정지 후 촬영(플랜 B)은 같은 폴더의 별도 파일로 둔다.
+
 사용법:
-  python3 quick_capture/recorder.py              # 기본 2Hz
-  python3 quick_capture/recorder.py --hz 1       # 1Hz로 변경
-  python3 quick_capture/recorder.py --hz 0.5     # 2초당 1장
+  python3 quick_capture/field_capture/recorder.py              # 기본 2Hz
+  python3 quick_capture/field_capture/recorder.py --hz 1       # 1Hz로 변경
+  python3 quick_capture/field_capture/recorder.py --hz 0.5     # 2초당 1장
 
 명령어 (실행 중):
   s : 캡처 시작 (새 세션 폴더 생성)
