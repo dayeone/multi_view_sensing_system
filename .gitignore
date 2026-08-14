@@ -31,6 +31,10 @@ health_classifier/datasets/
 health_classifier/runs/
 health_classifier/classify_out_*/
 health_classifier/*.pt
+health_classifier/test/*
+!health_classifier/test/annotated/
+health_classifier/test/annotated/*
+!health_classifier/test/annotated/verdicts.csv
 
 # ── 개인 자료 (저장소에 두지 않음) ─────────────
 patent_docs/

@@ -84,6 +84,14 @@ colcon test-result --verbose
 - **`calib_calc.py`**: 오프라인 캘리브레이션 계산기. `calib_data/cam{N}/`의 체커보드 이미지를 읽어 `cv2.calibrateCamera()` 실행. 이미지별 reprojection error 출력 후 `calib_params/cam{N}_params.yaml`에 카메라 매트릭스·왜곡 계수 저장.
 - **`calib_viewer.py:CalibViewer`**: 저장된 캘리브레이션 파라미터 기반 원본·undistorted 비교 뷰.
 
+### 문서 (`docs/`)
+
+시스템 사실은 메모리가 아니라 저장소에 둔다. 작업 전 관련 문서를 먼저 확인한다.
+
+- `docs/pipeline_overview.md`: 데이터 흐름, 담당 4영역, 취득 플랜 A/B/C, 기계별 배치
+- `docs/camera_rig_geometry.md`: 카메라 물리 배치·시리얼 매핑·기하 실측값·180° 플립 처리 규칙
+- `docs/agrix_api.md`: HKS Agrix 서버 연동 규격, 자격증명 2종 구분, 오류 대응표
+
 ### 데이터 디렉토리
 
 - `calib_data/`: 채널별 원본 캘리브레이션 이미지 (`cam1/`–`cam4/`)
@@ -116,7 +124,10 @@ colcon test-result --verbose
 
 ## Git 워크플로우
 
-- 모든 작업은 feature 브랜치에서 진행한다: `feature/<설명>`, `fix/<설명>`, `docs/<설명>`, `refactor/<설명>`.
+- 기본 브랜치는 3개를 유지한다: `main`, `feat/capture`(취득·업로드 계열), `feat/model`(추론·학습 계열).
+- 새 작업은 **목적에 맞는 기존 브랜치에서 진행한다.** 같은 목적의 브랜치를 중복 생성하지 않는다.
+- 세부 작업으로 분리가 필요하면 해당 브랜치의 하위 브랜치를 만들 수 있다. 만들기 전에 사유를 보고한다.
+- 커밋 명령을 제안하기 전에 `git branch -vv`로 기존 브랜치를 먼저 확인한다.
 - Commit 형식: `<type>(<scope>): <설명>`. type은 feat, fix, docs, refactor, test, chore 중 하나.
 - main 브랜치 머지 및 push는 사용자 명시 승인 후에만 진행한다.
 
